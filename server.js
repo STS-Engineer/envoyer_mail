@@ -487,7 +487,185 @@ app.post("/api/support/send-email", async (req, res) => {
     });
   }
 });
-
+// ========== ROUTE EXISTANTE : GÉNÉRATION excel + EMAIL ==========
+app.post("/api/generate-excel-and-send", async (req, res) => {
+  try {
+    const { email, subject, sheets, filename } = req.body || {};
+ 
+    // Validation des données requises
+    if (!email || !subject || !sheets) {
+      return res.status(400).json({
+        success: false,
+        error: "Données manquantes",
+        details: "Envoyez email, subject, sheets (array ou objet)",
+      });
+    }
+ 
+    if (!isValidEmail(email)) {
+      return res.status(400).json({
+        success: false,
+        error: "Email invalide"
+      });
+    }
+ 
+    // Création du workbook
+    const workbook = XLSX.utils.book_new();
+ 
+    // Traitement des sheets
+    // Format accepté :
+    // 1. Array de sheets: [{ name: "Sheet1", data: [[...]] }, ...]
+    // 2. Objet avec clés = noms des sheets: { "Sheet1": [[...]], "Sheet2": [[...]] }
+    if (Array.isArray(sheets)) {
+      // Format array
+      if (sheets.length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: "Le tableau sheets est vide",
+        });
+      }
+ 
+      sheets.forEach((sheet, index) => {
+        const sheetName = sheet.name || `Sheet${index + 1}`;
+        const sheetData = sheet.data;
+ 
+        if (!Array.isArray(sheetData)) {
+          throw new Error(`Les données du sheet "${sheetName}" doivent être un tableau`);
+        }
+ 
+        // Création de la feuille à partir des données
+        const worksheet = XLSX.utils.aoa_to_sheet(sheetData);
+       
+        // Ajout de la feuille au workbook
+        XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+      });
+    } else if (typeof sheets === "object" && sheets !== null) {
+      // Format objet
+      const sheetNames = Object.keys(sheets);
+     
+      if (sheetNames.length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: "L'objet sheets est vide",
+        });
+      }
+ 
+      sheetNames.forEach((sheetName) => {
+        const sheetData = sheets[sheetName];
+ 
+        if (!Array.isArray(sheetData)) {
+          throw new Error(`Les données du sheet "${sheetName}" doivent être un tableau`);
+        }
+ 
+        // Création de la feuille à partir des données
+        const worksheet = XLSX.utils.aoa_to_sheet(sheetData);
+       
+        // Ajout de la feuille au workbook
+        XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+      });
+    } else {
+      return res.status(400).json({
+        success: false,
+        error: "Format sheets invalide",
+        details: "sheets doit être un array ou un objet",
+      });
+    }
+ 
+    // Génération du buffer Excel
+    const excelBuffer = XLSX.write(workbook, {
+      type: "buffer",
+      bookType: "xlsx",
+      compression: true,
+    });
+ 
+    // Nom du fichier Excel
+    const excelFilename = filename
+      ? `${String(filename).replace(/[^a-z0-9]/gi, "_")}.xlsx`
+      : `rapport_${Date.now()}.xlsx`;
+ 
+    // Préparation du HTML de l'email
+    const sheetCount = workbook.SheetNames.length;
+    const sheetsList = workbook.SheetNames.map((name, i) =>
+      `<li><strong>Sheet ${i + 1}:</strong> ${escapeHtml(name)}</li>`
+    ).join("");
+ 
+    const emailHtml = `
+      <!DOCTYPE html>
+      <html>
+        <body style="font-family: Arial, sans-serif; line-height:1.6; color:#111827;">
+          <h2 style="margin:0 0 8px 0;">📊 Votre fichier Excel est prêt</h2>
+         
+          <div style="background:#e0f2fe;padding:12px;border-left:4px solid #0ea5e9;border-radius:6px;margin:12px 0;">
+            <strong>📧 Sujet :</strong> ${escapeHtml(subject)}<br>
+            <strong>📁 Fichier :</strong> ${escapeHtml(excelFilename)}<br>
+            <strong>📋 Nombre de feuilles :</strong> ${sheetCount}<br>
+            <strong>📅 Date :</strong> ${new Date().toLocaleDateString("fr-FR", {
+              year: "numeric",
+              month: "long",
+              day: "numeric",
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
+          </div>
+ 
+          ${sheetCount > 0 ? `
+          <div style="background:#f0fdf4;padding:12px;border-left:4px solid #10b981;border-radius:6px;margin:12px 0;">
+            <strong>📑 Feuilles incluses :</strong>
+            <ul style="margin:8px 0 0 0;padding-left:20px;">
+              ${sheetsList}
+            </ul>
+          </div>
+          ` : ''}
+ 
+          <p>Vous trouverez le fichier Excel complet en pièce jointe.</p>
+         
+          <div style="background:#fef3c7;padding:10px;border-radius:6px;margin:12px 0;font-size:13px;">
+            <strong>💡 Astuce :</strong> Ouvrez le fichier avec Microsoft Excel, Google Sheets ou LibreOffice Calc.
+          </div>
+ 
+          <p style="color:#6b7280;font-size:12px;margin-top:20px;">
+            © ${new Date().getFullYear()} ${EMAIL_FROM_NAME}
+          </p>
+        </body>
+      </html>
+    `;
+ 
+    // Envoi de l'email avec le fichier Excel en pièce jointe
+    await transporter.sendMail({
+      from: { name: EMAIL_FROM_NAME, address: EMAIL_FROM },
+      to: email,
+      subject: subject,
+      html: emailHtml,
+      attachments: [
+        {
+          filename: excelFilename,
+          content: excelBuffer,
+          contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        },
+      ],
+    });
+ 
+    console.log(`✅ Excel envoyé à ${email} - ${excelFilename}`);
+ 
+    return res.json({
+      success: true,
+      message: "Fichier Excel généré et envoyé avec succès",
+      details: {
+        email,
+        filename: excelFilename,
+        sheets: workbook.SheetNames,
+        sheetCount,
+        fileSize: `${(excelBuffer.length / 1024).toFixed(2)} KB`,
+      },
+    });
+  } catch (err) {
+    console.error("❌ Erreur génération/envoi Excel:", err && err.stack ? err.stack : String(err));
+    return res.status(500).json({
+      success: false,
+      error: "Erreur lors du traitement",
+      details: (err && err.message) ?? String(err),
+    });
+  }
+});
 // ========== ROUTE EXISTANTE : GÉNÉRATION PDF + EMAIL ==========
 app.post("/api/generate-and-send", async (req, res) => {
   try {
