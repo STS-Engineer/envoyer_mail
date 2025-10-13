@@ -9,6 +9,7 @@ const https = require("https");
 const fs = require("fs");
 const path = require("path");
 const sharp = require("sharp");
+const XLSX = require("xlsx");
 
 const app = express();
 
