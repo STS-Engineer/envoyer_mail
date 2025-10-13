@@ -3,13 +3,14 @@
   "version": "2.0.0",
   "description": "API Express pour génération de PDF et envoi d'emails (support) avec PDFKit, Nodemailer et Sharp.",
   "private": true,
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "nodemon --watch . index.js"
+    "start": "node server.js",
+    "dev": "nodemon --watch . server.js",
+    "postinstall": "npm rebuild sharp"
   },
   "engines": {
-    "node": ">=18.18.0"
+    "node": ">=20.0.0"
   },
   "dependencies": {
     "cors": "^2.8.5",
