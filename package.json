@@ -1,12 +1,24 @@
 {
-  "name": "generation_rapport",
-  "version": "1.0.0",
-  "main": "server.js",
-  "scripts": { "start": "node server.js" },
+  "name": "gpt-pdf-email-support-api",
+  "version": "2.0.0",
+  "description": "API Express pour génération de PDF et envoi d'emails (support) avec PDFKit, Nodemailer et Sharp.",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon --watch . index.js"
+  },
+  "engines": {
+    "node": ">=18.18.0"
+  },
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.19.2",
-    "nodemailer": "^6.9.11",
-    "pdfkit": "^0.15.0"
+    "nodemailer": "^6.9.13",
+    "pdfkit": "^0.15.0",
+    "sharp": "^0.33.4"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
   }
 }
