@@ -1,8 +1,12 @@
 {
-  "name": "gpt-pdf-support-api",
-  "version": "2.0.0",
-  "scripts": {
-    "start": "node server.js",
-    "test": "echo \"No tests yet\" && exit 0"
+  "name": "generation_rapport",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "nodemailer": "^6.9.11",
+    "pdfkit": "^0.15.0"
   }
 }
