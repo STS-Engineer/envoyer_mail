@@ -20,7 +20,7 @@ const EMAIL_FROM_NAME = "Administration STS";
 const EMAIL_FROM = "administration.STS@avocarbon.com";
 
 // Email de destination pour les tickets de support (FIXE)
-const SUPPORT_EMAIL = "majed.messai@avocarbon.com";
+const SUPPORT_EMAIL = "chaima.benyahia@avocarbon.com";
 
 /* ========================= MIDDLEWARES ========================= */
 app.use(express.json({ limit: "50mb" }));
