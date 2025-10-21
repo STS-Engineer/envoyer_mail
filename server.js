@@ -365,18 +365,111 @@ app.post("/api/support/send-email", async (req, res) => {
               margin: 0 auto;
               padding: 20px;
             }
-            .header {
-              background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-              color: black;
-              padding: 20px;
-              border-radius: 8px 8px 0 0;
-              text-align: center;
+           .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: black;
+            padding: 20px;
+            border-radius: 8px 8px 0 0;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .header h1 {
+            color: #ff0000;
+            margin: 0;
+            font-size: 48px;
+            font-weight: 900;
+            letter-spacing: 8px;
+            position: relative;
+            text-shadow: 
+                0 0 10px rgba(255, 0, 0, 0.8),
+                0 0 20px rgba(255, 0, 0, 0.6),
+                0 0 30px rgba(255, 0, 0, 0.4),
+                2px 2px 4px rgba(0, 0, 0, 0.3);
+            animation: pulse 1.5s ease-in-out infinite, shake 0.5s ease-in-out infinite;
+        }
+
+        .header h1::before {
+            content: 'SOS';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            color: rgba(255, 0, 0, 0.3);
+            z-index: -1;
+            animation: glitch 2s infinite;
+        }
+
+        .header h1::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(255, 0, 0, 0.2) 0%, transparent 70%);
+            animation: expand 2s ease-out infinite;
+            z-index: -2;
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                text-shadow: 
+                    0 0 10px rgba(255, 0, 0, 0.8),
+                    0 0 20px rgba(255, 0, 0, 0.6),
+                    2px 2px 4px rgba(0, 0, 0, 0.3);
             }
-            .header h1 {
-              color: black;
-              margin: 0;
-              font-size: 24px;
+            50% {
+                text-shadow: 
+                    0 0 20px rgba(255, 0, 0, 1),
+                    0 0 30px rgba(255, 0, 0, 0.8),
+                    0 0 40px rgba(255, 0, 0, 0.6),
+                    0 0 50px rgba(255, 0, 0, 0.4),
+                    2px 2px 4px rgba(0, 0, 0, 0.3);
             }
+        }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0) rotate(0deg); }
+            25% { transform: translateX(-2px) rotate(-0.5deg); }
+            75% { transform: translateX(2px) rotate(0.5deg); }
+        }
+
+        @keyframes glitch {
+            0%, 90%, 100% {
+                transform: translate(0, 0);
+                opacity: 0.3;
+            }
+            92% {
+                transform: translate(-3px, -3px);
+                opacity: 0.5;
+            }
+            94% {
+                transform: translate(3px, 3px);
+                opacity: 0.5;
+            }
+            96% {
+                transform: translate(-3px, 3px);
+                opacity: 0.3;
+            }
+        }
+
+        @keyframes expand {
+            0% {
+                transform: translate(-50%, -50%) scale(0.8);
+                opacity: 0.4;
+            }
+            50% {
+                opacity: 0.2;
+            }
+            100% {
+                transform: translate(-50%, -50%) scale(1.5);
+                opacity: 0;
+            }
+        }
             .content {
               background: #f9fafb;
               padding: 20px;
