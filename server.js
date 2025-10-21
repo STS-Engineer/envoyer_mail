@@ -367,7 +367,7 @@ app.post("/api/support/send-email", async (req, res) => {
             }
             .header {
               background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-              color: white;
+              color: black;
               padding: 20px;
               border-radius: 8px 8px 0 0;
               text-align: center;
