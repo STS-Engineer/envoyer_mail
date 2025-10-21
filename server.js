@@ -373,6 +373,7 @@ app.post("/api/support/send-email", async (req, res) => {
               text-align: center;
             }
             .header h1 {
+              color: black;
               margin: 0;
               font-size: 24px;
             }
