@@ -182,9 +182,18 @@ function generatePDF(content) {
       doc.on("end", () => resolve(Buffer.concat(chunks)));
       doc.on("error", reject);
 
-      doc.fontSize(26).font("Helvetica-Bold").fillColor("#1e40af").text(content.title, { align: "center" });
+      doc
+        .fontSize(26)
+        .font("Helvetica-Bold")
+        .fillColor("#1e40af")
+        .text(content.title, { align: "center" });
       doc.moveDown(0.5);
-      doc.strokeColor("#3b82f6").lineWidth(2).moveTo(50, doc.y).lineTo(doc.page.width - 50, doc.y).stroke();
+      doc
+        .strokeColor("#3b82f6")
+        .lineWidth(2)
+        .moveTo(50, doc.y)
+        .lineTo(doc.page.width - 50, doc.y)
+        .stroke();
       doc.moveDown();
 
       doc
@@ -192,7 +201,11 @@ function generatePDF(content) {
         .fillColor("#6b7280")
         .font("Helvetica")
         .text(
-          `Date: ${new Date().toLocaleDateString("fr-FR", { year: "numeric", month: "long", day: "numeric" })}`,
+          `Date: ${new Date().toLocaleDateString("fr-FR", {
+            year: "numeric",
+            month: "long",
+            day: "numeric",
+          })}`,
           { align: "right" }
         );
       doc.moveDown(2);
@@ -200,7 +213,11 @@ function generatePDF(content) {
       if (content.introduction) {
         doc.fontSize(16).font("Helvetica-Bold").fillColor("#1f2937").text("Introduction");
         doc.moveDown(0.5);
-        doc.fontSize(11).font("Helvetica").fillColor("#374151").text(content.introduction, { align: "justify", lineGap: 3 });
+        doc
+          .fontSize(11)
+          .font("Helvetica")
+          .fillColor("#374151")
+          .text(content.introduction, { align: "justify", lineGap: 3 });
         doc.moveDown(2);
       }
 
@@ -213,11 +230,19 @@ function generatePDF(content) {
               doc.addPage();
             }
 
-            doc.fontSize(14).font("Helvetica-Bold").fillColor("#1e40af").text(`${index + 1}. ${section.title || "Section"}`);
+            doc
+              .fontSize(14)
+              .font("Helvetica-Bold")
+              .fillColor("#1e40af")
+              .text(`${index + 1}. ${section.title || "Section"}`);
             doc.moveDown(0.5);
 
             if (section.content) {
-              doc.fontSize(11).font("Helvetica").fillColor("#374151").text(section.content, { align: "justify", lineGap: 3 });
+              doc
+                .fontSize(11)
+                .font("Helvetica")
+                .fillColor("#374151")
+                .text(section.content, { align: "justify", lineGap: 3 });
               doc.moveDown(1);
             }
 
@@ -260,14 +285,25 @@ function generatePDF(content) {
 
                 doc.moveDown(1);
                 if (section.imageCaption) {
-                  doc.fontSize(9).fillColor("#6b7280").font("Helvetica-Oblique").text(section.imageCaption, { align: "center" });
+                  doc
+                    .fontSize(9)
+                    .fillColor("#6b7280")
+                    .font("Helvetica-Oblique")
+                    .text(section.imageCaption, { align: "center" });
                   doc.moveDown(1);
                 }
               } catch (imgError) {
-                const msg = (imgError && (imgError.message || imgError.reason)) ?? String(imgError);
+                const msg =
+                  (imgError && (imgError.message || imgError.reason)) ?? String(imgError);
                 console.error("❌ Erreur image:", msg);
-                doc.fontSize(10).fillColor("#ef4444").text("⚠️ Erreur lors du chargement de l'image", { align: "center" });
-                doc.fontSize(8).fillColor("#9ca3af").text(`(${msg})`, { align: "center" });
+                doc
+                  .fontSize(10)
+                  .fillColor("#ef4444")
+                  .text("⚠️ Erreur lors du chargement de l'image", { align: "center" });
+                doc
+                  .fontSize(8)
+                  .fillColor("#9ca3af")
+                  .text(`(${msg})`, { align: "center" });
                 doc.moveDown(1);
               }
             }
@@ -279,9 +315,17 @@ function generatePDF(content) {
             if (doc.y > doc.page.height - 150) {
               doc.addPage();
             }
-            doc.fontSize(16).font("Helvetica-Bold").fillColor("#1f2937").text("Conclusion");
+            doc
+              .fontSize(16)
+              .font("Helvetica-Bold")
+              .fillColor("#1f2937")
+              .text("Conclusion");
             doc.moveDown(0.5);
-            doc.fontSize(11).font("Helvetica").fillColor("#374151").text(content.conclusion, { align: "justify", lineGap: 3 });
+            doc
+              .fontSize(11)
+              .font("Helvetica")
+              .fillColor("#374151")
+              .text(content.conclusion, { align: "justify", lineGap: 3 });
           }
 
           const range = doc.bufferedPageRange();
@@ -306,7 +350,10 @@ function generatePDF(content) {
         doc.end();
       }
     } catch (err) {
-      console.error("Erreur génération PDF:", err && err.stack ? err.stack : String(err));
+      console.error(
+        "Erreur génération PDF:",
+        err && err.stack ? err.stack : String(err)
+      );
       reject(err);
     }
   });
@@ -329,7 +376,7 @@ app.post("/api/echo", (req, res) => {
   res.json({ ok: true, got: req.body || {} });
 });
 
-// ========== NOUVELLE ROUTE : ENVOI EMAIL SUPPORT ==========
+// ========== ROUTE : ENVOI EMAIL SUPPORT ==========
 app.post("/api/support/send-email", async (req, res) => {
   try {
     const { username, comment, assistant_name } = req.body || {};
@@ -343,7 +390,6 @@ app.post("/api/support/send-email", async (req, res) => {
       });
     }
 
-    // Préparation de l'email
     const timestamp = new Date().toLocaleString("fr-FR", {
       year: "numeric",
       month: "long",
@@ -365,32 +411,28 @@ app.post("/api/support/send-email", async (req, res) => {
               margin: 0 auto;
               padding: 20px;
             }
-           .header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: black;
-            padding: 20px;
-            border-radius: 8px 8px 0 0;
-            text-align: center;
-            position: relative;
-            overflow: hidden;
-          }
-
-          .header h1 {
-            color: #ff0000;
-            margin: 0;
-            font-size: 48px;
-            font-weight: 900;
-            letter-spacing: 8px;
-            position: relative;
-            text-shadow: 
+            .header {
+              background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+              color: black;
+              padding: 20px;
+              border-radius: 8px 8px 0 0;
+              text-align: center;
+              position: relative;
+              overflow: hidden;
+            }
+            .header h1 {
+              color: #ff0000;
+              margin: 0;
+              font-size: 48px;
+              font-weight: 900;
+              letter-spacing: 8px;
+              position: relative;
+              text-shadow:
                 0 0 10px rgba(255, 0, 0, 0.8),
                 0 0 20px rgba(255, 0, 0, 0.6),
                 0 0 30px rgba(255, 0, 0, 0.4),
                 2px 2px 4px rgba(0, 0, 0, 0.3);
-            animation: pulse 1.5s ease-in-out infinite, shake 0.5s ease-in-out infinite;
-        }
-
-         
+            }
             .content {
               background: #f9fafb;
               padding: 20px;
@@ -441,10 +483,10 @@ app.post("/api/support/send-email", async (req, res) => {
           </style>
         </head>
         <body>
-         <div class="header">
+          <div class="header">
             <h1>🆘</h1>
           </div>
-          
+
           <div class="content">
             <div style="text-align: center; margin-bottom: 20px;">
               <span class="priority">NOUVEAU TICKET</span>
@@ -478,7 +520,6 @@ app.post("/api/support/send-email", async (req, res) => {
       </html>
     `;
 
-    // Envoi de l'email
     await transporter.sendMail({
       from: { name: EMAIL_FROM_NAME, address: EMAIL_FROM },
       to: SUPPORT_EMAIL,
@@ -495,7 +536,10 @@ app.post("/api/support/send-email", async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
-    console.error("❌ Erreur envoi email support:", err && err.stack ? err.stack : String(err));
+    console.error(
+      "❌ Erreur envoi email support:",
+      err && err.stack ? err.stack : String(err)
+    );
     return res.status(500).json({
       success: false,
       error: "Erreur lors de l'envoi de l'email",
@@ -503,11 +547,12 @@ app.post("/api/support/send-email", async (req, res) => {
     });
   }
 });
-// ========== ROUTE EXISTANTE : GÉNÉRATION excel + EMAIL ==========
+
+// ========== ROUTE : GÉNÉRATION EXCEL + EMAIL ==========
 app.post("/api/generate-excel-and-send", async (req, res) => {
   try {
     const { email, subject, sheets, filename } = req.body || {};
- 
+
     // Validation des données requises
     if (!email || !subject || !sheets) {
       return res.status(400).json({
@@ -516,66 +561,57 @@ app.post("/api/generate-excel-and-send", async (req, res) => {
         details: "Envoyez email, subject, sheets (array ou objet)",
       });
     }
- 
+
     if (!isValidEmail(email)) {
       return res.status(400).json({
         success: false,
-        error: "Email invalide"
+        error: "Email invalide",
       });
     }
- 
+
     // Création du workbook
     const workbook = XLSX.utils.book_new();
- 
-    // Traitement des sheets
-    // Format accepté :
-    // 1. Array de sheets: [{ name: "Sheet1", data: [[...]] }, ...]
-    // 2. Objet avec clés = noms des sheets: { "Sheet1": [[...]], "Sheet2": [[...]] }
+
+    // Gestion des formats de "sheets"
     if (Array.isArray(sheets)) {
-      // Format array
+      // Format: [{ name, data }]
       if (sheets.length === 0) {
         return res.status(400).json({
           success: false,
           error: "Le tableau sheets est vide",
         });
       }
- 
+
       sheets.forEach((sheet, index) => {
         const sheetName = sheet.name || `Sheet${index + 1}`;
         const sheetData = sheet.data;
- 
+
         if (!Array.isArray(sheetData)) {
           throw new Error(`Les données du sheet "${sheetName}" doivent être un tableau`);
         }
- 
-        // Création de la feuille à partir des données
+
         const worksheet = XLSX.utils.aoa_to_sheet(sheetData);
-       
-        // Ajout de la feuille au workbook
         XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
       });
     } else if (typeof sheets === "object" && sheets !== null) {
-      // Format objet
+      // Format: { "NomSheet": [ [..], .. ] }
       const sheetNames = Object.keys(sheets);
-     
+
       if (sheetNames.length === 0) {
         return res.status(400).json({
           success: false,
           error: "L'objet sheets est vide",
         });
       }
- 
+
       sheetNames.forEach((sheetName) => {
         const sheetData = sheets[sheetName];
- 
+
         if (!Array.isArray(sheetData)) {
           throw new Error(`Les données du sheet "${sheetName}" doivent être un tableau`);
         }
- 
-        // Création de la feuille à partir des données
+
         const worksheet = XLSX.utils.aoa_to_sheet(sheetData);
-       
-        // Ajout de la feuille au workbook
         XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
       });
     } else {
@@ -585,31 +621,32 @@ app.post("/api/generate-excel-and-send", async (req, res) => {
         details: "sheets doit être un array ou un objet",
       });
     }
- 
+
     // Génération du buffer Excel
     const excelBuffer = XLSX.write(workbook, {
       type: "buffer",
       bookType: "xlsx",
       compression: true,
     });
- 
-    // Nom du fichier Excel
+
+    // Nom du fichier
     const excelFilename = filename
       ? `${String(filename).replace(/[^a-z0-9]/gi, "_")}.xlsx`
       : `rapport_${Date.now()}.xlsx`;
- 
-    // Préparation du HTML de l'email
+
     const sheetCount = workbook.SheetNames.length;
-    const sheetsList = workbook.SheetNames.map((name, i) =>
-      `<li><strong>Sheet ${i + 1}:</strong> ${escapeHtml(name)}</li>`
-    ).join("");
- 
+    const sheetsList = workbook.SheetNames
+      .map(
+        (name, i) => `<li><strong>Sheet ${i + 1}:</strong> ${escapeHtml(name)}</li>`
+      )
+      .join("");
+
     const emailHtml = `
       <!DOCTYPE html>
       <html>
         <body style="font-family: Arial, sans-serif; line-height:1.6; color:#111827;">
           <h2 style="margin:0 0 8px 0;">📊 Votre fichier Excel est prêt</h2>
-         
+
           <div style="background:#e0f2fe;padding:12px;border-left:4px solid #0ea5e9;border-radius:6px;margin:12px 0;">
             <strong>📧 Sujet :</strong> ${escapeHtml(subject)}<br>
             <strong>📁 Fichier :</strong> ${escapeHtml(excelFilename)}<br>
@@ -622,46 +659,50 @@ app.post("/api/generate-excel-and-send", async (req, res) => {
               minute: "2-digit",
             })}
           </div>
- 
-          ${sheetCount > 0 ? `
+
+          ${
+            sheetCount > 0
+              ? `
           <div style="background:#f0fdf4;padding:12px;border-left:4px solid #10b981;border-radius:6px;margin:12px 0;">
             <strong>📑 Feuilles incluses :</strong>
             <ul style="margin:8px 0 0 0;padding-left:20px;">
               ${sheetsList}
             </ul>
           </div>
-          ` : ''}
- 
+          `
+              : ""
+          }
+
           <p>Vous trouverez le fichier Excel complet en pièce jointe.</p>
-         
+
           <div style="background:#fef3c7;padding:10px;border-radius:6px;margin:12px 0;font-size:13px;">
             <strong>💡 Astuce :</strong> Ouvrez le fichier avec Microsoft Excel, Google Sheets ou LibreOffice Calc.
           </div>
- 
+
           <p style="color:#6b7280;font-size:12px;margin-top:20px;">
             © ${new Date().getFullYear()} ${EMAIL_FROM_NAME}
           </p>
         </body>
       </html>
     `;
- 
-    // Envoi de l'email avec le fichier Excel en pièce jointe
+
     await transporter.sendMail({
       from: { name: EMAIL_FROM_NAME, address: EMAIL_FROM },
       to: email,
-      subject: subject,
+      subject,
       html: emailHtml,
       attachments: [
         {
           filename: excelFilename,
           content: excelBuffer,
-          contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          contentType:
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         },
       ],
     });
- 
+
     console.log(`✅ Excel envoyé à ${email} - ${excelFilename}`);
- 
+
     return res.json({
       success: true,
       message: "Fichier Excel généré et envoyé avec succès",
@@ -674,7 +715,10 @@ app.post("/api/generate-excel-and-send", async (req, res) => {
       },
     });
   } catch (err) {
-    console.error("❌ Erreur génération/envoi Excel:", err && err.stack ? err.stack : String(err));
+    console.error(
+      "❌ Erreur génération/envoi Excel:",
+      err && err.stack ? err.stack : String(err)
+    );
     return res.status(500).json({
       success: false,
       error: "Erreur lors du traitement",
@@ -682,7 +726,8 @@ app.post("/api/generate-excel-and-send", async (req, res) => {
     });
   }
 });
-// ========== ROUTE EXISTANTE : GÉNÉRATION PDF + EMAIL ==========
+
+// ========== ROUTE : GÉNÉRATION PDF + EMAIL ==========
 app.post("/api/generate-and-send", async (req, res) => {
   try {
     const { email, subject, reportContent } = req.body || {};
@@ -710,7 +755,9 @@ app.post("/api/generate-and-send", async (req, res) => {
     }
 
     const pdfBuffer = await generatePDF(reportContent);
-    const pdfName = `rapport_${String(reportContent.title).replace(/[^a-z0-9]/gi, "_").toLowerCase()}_${Date.now()}.pdf`;
+    const pdfName = `rapport_${String(reportContent.title)
+      .replace(/[^a-z0-9]/gi, "_")
+      .toLowerCase()}_${Date.now()}.pdf`;
 
     const html = `
       <!DOCTYPE html>
@@ -754,6 +801,7 @@ app.post("/api/generate-and-send", async (req, res) => {
   }
 });
 
+// Test image
 app.post("/api/test-image", async (req, res) => {
   try {
     const { imageUrl, imageData } = req.body || {};
@@ -790,9 +838,13 @@ app.post("/api/test-image", async (req, res) => {
       imageType: type,
       size: `${(buffer.length / 1024).toFixed(2)} KB`,
       sizeBytes: buffer.length,
-      magicBytes: `${buffer[0].toString(16).padStart(2, "0")} ${buffer[1]
+      magicBytes: `${buffer[0]
         .toString(16)
-        .padStart(2, "0")} ${buffer[2].toString(16).padStart(2, "0")} ${buffer[3]
+        .padStart(2, "0")} ${buffer[1]
+        .toString(16)
+        .padStart(2, "0")} ${buffer[2]
+        .toString(16)
+        .padStart(2, "0")} ${buffer[3]
         .toString(16)
         .padStart(2, "0")}`,
       normalizedPreviewPossible: normalizedOk,
@@ -802,25 +854,28 @@ app.post("/api/test-image", async (req, res) => {
   }
 });
 
+// Healthcheck
 app.get("/health", (_req, res) => {
   res.json({
     status: "OK",
     timestamp: new Date().toISOString(),
     uptime: Math.floor(process.uptime()),
-    service: "PDF Report & Support API",
+    service: "PDF / Excel Report & Support API",
   });
 });
 
+// Root : documentation rapide
 app.get("/", (_req, res) => {
   res.json({
-    name: "GPT PDF Email & Support API",
-    version: "2.0.0",
+    name: "GPT PDF / Excel Email & Support API",
+    version: "2.1.0",
     status: "running",
     endpoints: {
       health: "GET /health",
       echo: "POST /api/echo",
       testImage: "POST /api/test-image",
-      generateAndSend: "POST /api/generate-and-send",
+      generateAndSendPdf: "POST /api/generate-and-send",
+      generateExcelAndSend: "POST /api/generate-excel-and-send",
       sendSupportEmail: "POST /api/support/send-email",
       static: "GET /static/<fichier>",
     },
@@ -828,10 +883,17 @@ app.get("/", (_req, res) => {
 });
 
 /* ========================= 404 & ERREUR ======================== */
-app.use((req, res) => res.status(404).json({ error: "Route non trouvée", path: req.path }));
+app.use((req, res) =>
+  res.status(404).json({ error: "Route non trouvée", path: req.path })
+);
 app.use((err, _req, res, _next) => {
-  console.error("Erreur middleware:", err && err.stack ? err.stack : String(err));
-  res.status(500).json({ error: "Erreur serveur", message: (err && err.message) ?? String(err) });
+  console.error(
+    "Erreur middleware:",
+    err && err.stack ? err.stack : String(err)
+  );
+  res
+    .status(500)
+    .json({ error: "Erreur serveur", message: (err && err.message) ?? String(err) });
 });
 
 /* ============================ START ============================ */
