@@ -551,7 +551,8 @@ app.post("/api/support/send-email", async (req, res) => {
 // ========== ROUTE : GÉNÉRATION EXCEL + EMAIL ==========
 app.post("/api/generate-excel-and-send", async (req, res) => {
   try {
-    const { email, subject, sheets, filename } = req.body || {};
+    const { email, subject, sheets, filename, cc } = req.body || {};
+    //                       ↑↑↑ ajout de cc ici
 
     // Validation des données requises
     if (!email || !subject || !sheets) {
@@ -566,6 +567,15 @@ app.post("/api/generate-excel-and-send", async (req, res) => {
       return res.status(400).json({
         success: false,
         error: "Email invalide",
+      });
+    }
+
+    // cc est optionnel, mais si présent on le valide aussi
+    if (cc && !isValidEmail(cc)) {
+      return res.status(400).json({
+        success: false,
+        error: "Adresse email CC invalide",
+        details: `cc = ${cc}`,
       });
     }
 
@@ -689,6 +699,7 @@ app.post("/api/generate-excel-and-send", async (req, res) => {
     await transporter.sendMail({
       from: { name: EMAIL_FROM_NAME, address: EMAIL_FROM },
       to: email,
+      cc: cc || undefined, // ← ajout du CC ici (optionnel)
       subject,
       html: emailHtml,
       attachments: [
@@ -701,13 +712,16 @@ app.post("/api/generate-excel-and-send", async (req, res) => {
       ],
     });
 
-    console.log(`✅ Excel envoyé à ${email} - ${excelFilename}`);
+    console.log(
+      `✅ Excel envoyé à ${email}${cc ? " (CC: " + cc + ")" : ""} - ${excelFilename}`
+    );
 
     return res.json({
       success: true,
       message: "Fichier Excel généré et envoyé avec succès",
       details: {
         email,
+        cc: cc || null,
         filename: excelFilename,
         sheets: workbook.SheetNames,
         sheetCount,
