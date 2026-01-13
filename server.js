@@ -376,6 +376,85 @@ app.post("/api/echo", (req, res) => {
   res.json({ ok: true, got: req.body || {} });
 });
 
+// ========== ROUTE : ENVOI EMAIL SIMPLE (SANS PJ) ==========
+app.post("/api/send-email", async (req, res) => {
+  try {
+    const { email, subject, message, messageHtml, cc } = req.body || {};
+
+    // Validation
+    if (!email || !subject || (!message && !messageHtml)) {
+      return res.status(400).json({
+        success: false,
+        error: "Données manquantes",
+        details: "Envoyez email, subject, et (message ou messageHtml)",
+      });
+    }
+
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ success: false, error: "Email invalide" });
+    }
+
+    if (cc && !isValidEmail(cc)) {
+      return res.status(400).json({
+        success: false,
+        error: "Adresse email CC invalide",
+        details: `cc = ${cc}`,
+      });
+    }
+
+    // Si messageHtml n'est pas fourni, on construit un HTML simple à partir de message
+    const html =
+      messageHtml ||
+      `
+      <!DOCTYPE html>
+      <html>
+        <body style="font-family: Arial, sans-serif; line-height:1.6; color:#111827;">
+          <h2 style="margin:0 0 8px 0;">📩 ${escapeHtml(subject)}</h2>
+          <div style="background:#f9fafb;padding:12px;border:1px solid #e5e7eb;border-radius:6px;">
+            <p style="white-space:pre-wrap;margin:0;">${escapeHtml(message)}</p>
+          </div>
+          <p style="color:#6b7280;font-size:12px;margin-top:16px;">
+            © ${new Date().getFullYear()} ${EMAIL_FROM_NAME}
+          </p>
+        </body>
+      </html>
+    `;
+
+    await transporter.sendMail({
+      from: { name: EMAIL_FROM_NAME, address: EMAIL_FROM },
+      to: email,
+      cc: cc || undefined,
+      subject,
+      html,
+      // optionnel: ajouter aussi une version texte
+      text: message ? String(message) : undefined,
+    });
+
+    console.log(`✅ Email simple envoyé à ${email}${cc ? " (CC: " + cc + ")" : ""}`);
+
+    return res.json({
+      success: true,
+      message: "Email envoyé avec succès (sans pièce jointe)",
+      details: {
+        email,
+        cc: cc || null,
+        subject,
+        timestamp: new Date().toISOString(),
+      },
+    });
+  } catch (err) {
+    console.error(
+      "❌ Erreur envoi email simple:",
+      err && err.stack ? err.stack : String(err)
+    );
+    return res.status(500).json({
+      success: false,
+      error: "Erreur lors de l'envoi de l'email",
+      details: (err && err.message) ?? String(err),
+    });
+  }
+});
+
 // ========== ROUTE : ENVOI EMAIL SUPPORT ==========
 app.post("/api/support/send-email", async (req, res) => {
   try {
