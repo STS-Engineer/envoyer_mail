@@ -377,11 +377,12 @@ app.post("/api/echo", (req, res) => {
 });
 
 // ========== ROUTE : ENVOI EMAIL SIMPLE (SANS PJ) ==========
+
 app.post("/api/send-email", async (req, res) => {
   try {
     const { email, subject, message, messageHtml, cc } = req.body || {};
 
-    // Validation
+    // ---------- VALIDATION ----------
     if (!email || !subject || (!message && !messageHtml)) {
       return res.status(400).json({
         success: false,
@@ -391,7 +392,10 @@ app.post("/api/send-email", async (req, res) => {
     }
 
     if (!isValidEmail(email)) {
-      return res.status(400).json({ success: false, error: "Email invalide" });
+      return res.status(400).json({
+        success: false,
+        error: "Email invalide",
+      });
     }
 
     if (cc && !isValidEmail(cc)) {
@@ -402,39 +406,40 @@ app.post("/api/send-email", async (req, res) => {
       });
     }
 
-    // Si messageHtml n'est pas fourni, on construit un HTML simple à partir de message
+    // ---------- HTML BODY ----------
     const html =
       messageHtml ||
-      `
-      <!DOCTYPE html>
-      <html>
-        <body style="font-family: Arial, sans-serif; line-height:1.6; color:#111827;">
-          <h2 style="margin:0 0 8px 0;">📩 ${escapeHtml(subject)}</h2>
-          <div style="background:#f9fafb;padding:12px;border:1px solid #e5e7eb;border-radius:6px;">
-            <p style="white-space:pre-wrap;margin:0;">${escapeHtml(message)}</p>
-          </div>
-          <p style="color:#6b7280;font-size:12px;margin-top:16px;">
-            © ${new Date().getFullYear()} ${EMAIL_FROM_NAME}
-          </p>
-        </body>
-      </html>
-    `;
+      `<!DOCTYPE html>
+<html>
+  <body style="font-family: Arial, sans-serif; line-height:1.6; color:#111827;">
+    <h2 style="margin:0 0 8px 0;">📩 ${escapeHtml(subject)}</h2>
+    <div style="background:#f9fafb;padding:12px;border:1px solid #e5e7eb;border-radius:6px;">
+      <p style="white-space:pre-wrap;margin:0;">${escapeHtml(message)}</p>
+    </div>
+    <p style="color:#6b7280;font-size:12px;margin-top:16px;">
+      © ${new Date().getFullYear()} ${EMAIL_FROM_NAME}
+    </p>
+  </body>
+</html>`;
 
+    // ---------- SEND EMAIL ----------
     await transporter.sendMail({
       from: { name: EMAIL_FROM_NAME, address: EMAIL_FROM },
       to: email,
       cc: cc || undefined,
       subject,
       html,
-      // optionnel: ajouter aussi une version texte
       text: message ? String(message) : undefined,
     });
 
-    console.log(`✅ Email simple envoyé à ${email}${cc ? " (CC: " + cc + ")" : ""}`);
+    console.log(
+      `✅ Email simple envoyé à ${email}${cc ? " (CC: " + cc + ")" : ""}`
+    );
 
+    // ---------- SUCCESS RESPONSE ----------
     return res.json({
       success: true,
-      message: "Email envoyé avec succès (sans pièce jointe)",
+      message: "Email envoyé avec succès",
       details: {
         email,
         cc: cc || null,
@@ -443,17 +448,32 @@ app.post("/api/send-email", async (req, res) => {
       },
     });
   } catch (err) {
-    console.error(
-      "❌ Erreur envoi email simple:",
-      err && err.stack ? err.stack : String(err)
-    );
+    // ---------- ERROR LOGGING ----------
+    console.error("❌ Erreur envoi email simple (SMTP):", {
+      message: err?.message,
+      code: err?.code,
+      response: err?.response,
+      responseCode: err?.responseCode,
+      command: err?.command,
+      stack: err?.stack,
+    });
+
+    // ---------- ERROR RESPONSE ----------
     return res.status(500).json({
       success: false,
       error: "Erreur lors de l'envoi de l'email",
-      details: (err && err.message) ?? String(err),
+      details: err?.message ?? String(err),
+      smtp: {
+        code: err?.code,
+        responseCode: err?.responseCode,
+        response: err?.response,
+        command: err?.command,
+      },
     });
   }
 });
+
+
 
 // ========== ROUTE : ENVOI EMAIL SUPPORT ==========
 app.post("/api/support/send-email", async (req, res) => {
