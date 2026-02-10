@@ -369,14 +369,14 @@ async function sendEmailWithPdf({ to, subject, messageHtml, pdfBuffer, pdfFilena
   });
 }
 
-/// ====== ADRESSES ENTETE (selon site) ======
+// ====== ADRESSES ENTETE (selon site) ======
 const COMPANY_ADDRESS_MAP = {
   "avocarbon france": [
     "AVOCarbon France - 9 rue des imprimeurs - Z.I. de la République n° 1 - 86000 POITIERS France",
     "au capital de 3 224 460 € - RCS Poitiers B339 348 450 – Code APE 2732 Z – N° identification TVA FR 01339348450",
     "Phone : +33 5 49 62 25 00",
   ],
-  "france": [
+  france: [
     "AVOCarbon France - 9 rue des imprimeurs - Z.I. de la République n° 1 - 86000 POITIERS France",
     "au capital de 3 224 460 € - RCS Poitiers B339 348 450 – Code APE 2732 Z – N° identification TVA FR 01339348450",
     "Phone : +33 5 49 62 25 00",
@@ -388,7 +388,7 @@ const COMPANY_ADDRESS_MAP = {
     "Talstrasse 112",
     "D-60437 Frankfurt am Main",
   ],
-  "germany": [
+  germany: [
     "AVOCarbon Germany",
     "AVOCarbon Germany GmbH",
     "Talstrasse 112",
@@ -401,7 +401,7 @@ const COMPANY_ADDRESS_MAP = {
     "Pattaravakka Ambattur Chennai – 600098",
     "Tamilnadu",
   ],
-  "india": [
+  india: [
     "AVOCarbon India",
     "25/A2, Dairy Plant Road SIDCO Industrial Estate (NP)",
     "Pattaravakka Ambattur Chennai – 600098",
@@ -413,7 +413,7 @@ const COMPANY_ADDRESS_MAP = {
     "306, Nongong-ro, Nongong-eup",
     "Dalseong-Gun, Daegu",
   ],
-  "korea": [
+  korea: [
     "AVOCarbon Korea",
     "306, Nongong-ro, Nongong-eup",
     "Dalseong-Gun, Daegu",
@@ -426,7 +426,7 @@ const COMPANY_ADDRESS_MAP = {
     "GUADALUPE, N.L",
     "Mexico 67190",
   ],
-  "monterrey": [
+  monterrey: [
     "ASSYMEX MONTERREY",
     "San Sebastian 110",
     "Co. Los Lermas",
@@ -434,14 +434,14 @@ const COMPANY_ADDRESS_MAP = {
     "Mexico 67190",
   ],
 
-  "tunisia": [
+  tunisia: [
     "AVOCarbon",
     "Tunisia",
     "SCEET & SAME",
     "Zone industrielle Elfahs",
     "1140 Zaghouane",
   ],
-  "tunis": [
+  tunis: [
     "AVOCarbon",
     "Tunisia",
     "SCEET & SAME",
@@ -449,19 +449,21 @@ const COMPANY_ADDRESS_MAP = {
     "1140 Zaghouane",
   ],
 
-  "tianjin": [
+  tianjin: [
     "AVOCarbon Tianjin",
     "Junling Road 17 # Beizhakou",
     "Jinnan District",
+    "Jinnan District",
   ],
 
-  "kunshan": [
+  kunshan: [
     "AVOCarbon Kunshan",
     "N°9, Dongtinghu Road",
     "215335 Kunshan",
   ],
 };
 
+// ✅ normalizeKey (tu demandais "normalizeky")
 function normalizeKey(v) {
   return String(v || "").trim().toLowerCase();
 }
@@ -474,6 +476,53 @@ function getCompanyAddressLines(offer) {
     "france";
 
   return COMPANY_ADDRESS_MAP[key] || COMPANY_ADDRESS_MAP["france"];
+}
+
+// ====== ENTETE COMMUNE (toutes les pages) ======
+function drawOfferHeader(doc, offer, logoBuf) {
+  const pageW = doc.page.width;
+
+  // Ajuste si tu veux + d’espace
+  const TOP_BAR_H = 16;
+  const HEADER_BLOCK_H = 85;
+  const BOTTOM_BAR_H = 10;
+  const HEADER_TOTAL_H = TOP_BAR_H + HEADER_BLOCK_H + BOTTOM_BAR_H;
+
+  // Barre bleue haut
+  doc.save();
+  doc.fillColor("#0b5fa5").rect(0, 0, pageW, TOP_BAR_H).fill();
+  doc.restore();
+
+  // Adresse (gauche)
+  const addrLines = getCompanyAddressLines(offer) || [];
+  const addrX = 50;
+  const addrY = TOP_BAR_H + 10;
+
+  doc.font("Helvetica").fontSize(8).fillColor("#111827");
+  if (addrLines.length > 0) {
+    doc.text(addrLines.join("\n"), addrX, addrY, {
+      width: pageW - 100 - 170, // espace logo à droite
+      lineGap: 1,
+    });
+  }
+
+  // Logo (droite)
+  if (logoBuf) {
+    const logoW = 140;
+    const x = pageW - 50 - logoW;
+    const y = TOP_BAR_H + 10;
+
+    // Normalement OK si logo JPG valide
+    doc.image(logoBuf, x, y, { width: logoW });
+  }
+
+  // Barre bleue sous entête
+  doc.save();
+  doc.fillColor("#0b5fa5").rect(0, TOP_BAR_H + HEADER_BLOCK_H, pageW, BOTTOM_BAR_H).fill();
+  doc.restore();
+
+  // Curseur sous entête + espace
+  doc.y = HEADER_TOTAL_H + 20;
 }
 
 function generateOfferPDFWithLogo(offer) {
@@ -505,68 +554,16 @@ function generateOfferPDFWithLogo(offer) {
           validateImageBuffer(logoBuf);
         } catch (e) {
           console.warn("⚠️ Logo non chargé:", e?.message ?? String(e));
+          logoBuf = null;
         }
 
-        // ====== HEADER DRAWER (utilisé sur toutes les pages) ======
-        const pageW = doc.page.width;
-        const topBarH = 16;        // barre bleue en haut
-        const headerBlockH = 78;   // zone header (adresse + logo)
-        const bottomBarH = 10;     // barre bleue sous header
-        const headerTotalH = headerBlockH + bottomBarH; // hauteur totale
+        // ✅ Entête page 1
+        drawOfferHeader(doc, offer, logoBuf);
 
-        function drawHeader() {
-          // Barre bleue tout en haut
-          doc.save();
-          doc.fillColor("#0b5fa5").rect(0, 0, pageW, topBarH).fill();
-          doc.restore();
-
-          // Adresse à gauche
-          const addrLines = getCompanyAddressLines(offer) || [];
-          const addrX = 50;
-          const addrY = topBarH + 10;
-
-          doc.font("Helvetica").fontSize(8).fillColor("#111827");
-          if (addrLines.length > 0) {
-            doc.text(addrLines.join("\n"), addrX, addrY, {
-              width: pageW - 100 - 170, // espace logo à droite
-              lineGap: 1,
-            });
-          }
-
-          // Logo à droite
-          if (logoBuf) {
-            const logoW = 140;
-            const x = pageW - 50 - logoW;
-            const y = topBarH + 10;
-
-            try {
-              doc.image(logoBuf, x, y, { width: logoW });
-            } catch (_err) {
-              // fallback si JPG pose souci
-              // (si normalizeImageBuffer existe)
-              // eslint-disable-next-line no-undef
-              // const normalized = await normalizeImageBuffer(logoBuf, { format: "png" });
-              // doc.image(normalized, x, y, { width: logoW });
-              doc.image(logoBuf, x, y, { width: logoW });
-            }
-          }
-
-          // Barre bleue sous l'entête
-          doc.save();
-          doc.fillColor("#0b5fa5").rect(0, headerBlockH, pageW, bottomBarH).fill();
-          doc.restore();
-
-          // Position curseur sous l'entête + espace
-          doc.y = headerTotalH + 25;
-        }
-
-        // Quand une nouvelle page est ajoutée => redessiner header
+        // ✅ Entête toutes les pages suivantes
         doc.on("pageAdded", () => {
-          drawHeader();
+          drawOfferHeader(doc, offer, logoBuf);
         });
-
-        // Dessiner header première page
-        drawHeader();
 
         // ====== TITRE ======
         doc.font("Helvetica-Bold").fontSize(18).fillColor("#111827").text(
@@ -591,7 +588,10 @@ function generateOfferPDFWithLogo(offer) {
         // ====== CUSTOMER (DYNAMIQUE) ======
         const customerLines = Array.isArray(offer?.customerLines) ? offer.customerLines : [];
         const hasCustomer =
-          customerLines.length > 0 || offer?.customerName || offer?.customerAddress || offer?.toPerson;
+          customerLines.length > 0 ||
+          offer?.customerName ||
+          offer?.customerAddress ||
+          offer?.toPerson;
 
         if (hasCustomer) {
           doc.font("Helvetica-Bold").fontSize(11).fillColor("#111827").text("Customer");
@@ -611,7 +611,7 @@ function generateOfferPDFWithLogo(offer) {
         // ====== SUBJECT (bande bleue) ======
         if (offer?.subject) {
           const y0 = doc.y;
-          doc.save().fillColor("#dbeafe").rect(50, y0, pageW - 100, 22).fill().restore();
+          doc.save().fillColor("#dbeafe").rect(50, y0, doc.page.width - 100, 22).fill().restore();
           doc.font("Helvetica-Bold").fontSize(10).fillColor("#111827").text(
             offer.subject,
             58,
@@ -650,17 +650,8 @@ function generateOfferPDFWithLogo(offer) {
         if (offer?.signatureName) doc.text(offer.signatureName);
         if (offer?.signatureTitle) doc.text(offer.signatureTitle);
 
-        // ====== PAGINATION (corrigée) ======
-        const range = doc.bufferedPageRange();
-        for (let i = 0; i < range.count; i++) {
-          doc.switchToPage(i);
-          doc.fontSize(8).fillColor("#9ca3af").text(
-            `Page ${i + 1}`,               // ✅ plus de "sur X"
-            50,
-            doc.page.height - 50,
-            { align: "center", width: pageW - 100 }
-          );
-        }
+        // ✅ Pagination : SUPPRIMÉE totalement (comme tu as demandé)
+        // (ne rien écrire en bas)
 
         doc.end();
       } catch (err) {
@@ -669,6 +660,7 @@ function generateOfferPDFWithLogo(offer) {
     })();
   });
 }
+
 
 
 /* ============================ ROUTES ============================ */
