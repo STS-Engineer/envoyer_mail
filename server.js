@@ -369,6 +369,139 @@ async function sendEmailWithPdf({ to, subject, messageHtml, pdfBuffer, pdfFilena
   });
 }
 
+// ====== ADRESSES ENTETE (selon site) ======
+const COMPANY_ADDRESS_MAP = {
+  // FRANCE
+  "avocarbon france": [
+    "AVOCarbon France - 9 rue des imprimeurs - Z.I. de la République n° 1 - 86000 POITIERS France",
+    "au capital de 3 224 460 € - RCS Poitiers B339 348 450 – Code APE 2732 Z – N° identification TVA FR 01339348450",
+    "Phone : +33 5 49 62 25 00",
+  ],
+  "france": [
+    "AVOCarbon France - 9 rue des imprimeurs - Z.I. de la République n° 1 - 86000 POITIERS France",
+    "au capital de 3 224 460 € - RCS Poitiers B339 348 450 – Code APE 2732 Z – N° identification TVA FR 01339348450",
+    "Phone : +33 5 49 62 25 00",
+  ],
+
+  // GERMANY
+  "avocarbon germany": [
+    "AVOCarbon Germany",
+    "AVOCarbon Germany GmbH",
+    "Talstrasse 112",
+    "D-60437 Frankfurt am Main",
+  ],
+  "germany": [
+    "AVOCarbon Germany",
+    "AVOCarbon Germany GmbH",
+    "Talstrasse 112",
+    "D-60437 Frankfurt am Main",
+  ],
+
+  // INDIA
+  "avocarbon india": [
+    "AVOCarbon India",
+    "25/A2, Dairy Plant Road SIDCO Industrial Estate (NP)",
+    "Pattaravakka Ambattur Chennai – 600098",
+    "Tamilnadu",
+  ],
+  "india": [
+    "AVOCarbon India",
+    "25/A2, Dairy Plant Road SIDCO Industrial Estate (NP)",
+    "Pattaravakka Ambattur Chennai – 600098",
+    "Tamilnadu",
+  ],
+
+  // KOREA
+  "avocarbon korea": [
+    "AVOCarbon Korea",
+    "306, Nongong-ro, Nongong-eup",
+    "Dalseong-Gun, Daegu",
+  ],
+  "korea": [
+    "AVOCarbon Korea",
+    "306, Nongong-ro, Nongong-eup",
+    "Dalseong-Gun, Daegu",
+  ],
+
+  // ASSYMEX MONTERREY
+  "assymex monterrey": [
+    "ASSYMEX MONTERREY",
+    "San Sebastian 110",
+    "Co. Los Lermas",
+    "GUADALUPE, N.L",
+    "Mexico 67190",
+  ],
+  "monterrey": [
+    "ASSYMEX MONTERREY",
+    "San Sebastian 110",
+    "Co. Los Lermas",
+    "GUADALUPE, N.L",
+    "Mexico 67190",
+  ],
+
+  // TUNISIA
+  "avocarbon tunisia": [
+    "AVOCarbon",
+    "Tunisia",
+    "SCEET & SAME",
+    "Zone industrielle Elfahs",
+    "1140 Zaghouane",
+  ],
+  "tunisia": [
+    "AVOCarbon",
+    "Tunisia",
+    "SCEET & SAME",
+    "Zone industrielle Elfahs",
+    "1140 Zaghouane",
+  ],
+  "tunis": [
+    "AVOCarbon",
+    "Tunisia",
+    "SCEET & SAME",
+    "Zone industrielle Elfahs",
+    "1140 Zaghouane",
+  ],
+
+  // TIANJIN
+  "tianjin": [
+    "AVOCarbon Tianjin",
+    "Junling Road 17 # Beizhakou",
+    "Jinnan District",
+  ],
+  "avocarbon tianjin": [
+    "AVOCarbon Tianjin",
+    "Junling Road 17 # Beizhakou",
+    "Jinnan District",
+  ],
+
+  // KUNSHAN
+  "kunshan": [
+    "AVOCarbon Kunshan",
+    "N°9, Dongtinghu Road",
+    "215335 Kunshan",
+  ],
+  "avocarbon kunshan": [
+    "AVOCarbon Kunshan",
+    "N°9, Dongtinghu Road",
+    "215335 Kunshan",
+  ],
+};
+
+function normalizeKey(v) {
+  return String(v || "").trim().toLowerCase();
+}
+
+function getCompanyAddressLines(offer) {
+  // tu peux envoyer offer.company / offer.site / offer.entity
+  const key =
+    normalizeKey(offer?.company) ||
+    normalizeKey(offer?.site) ||
+    normalizeKey(offer?.entity) ||
+    "france";
+
+  return COMPANY_ADDRESS_MAP[key] || COMPANY_ADDRESS_MAP["france"];
+}
+
 function generateOfferPDFWithLogo(offer) {
   return new Promise((resolve, reject) => {
     (async () => {
@@ -400,11 +533,35 @@ function generateOfferPDFWithLogo(offer) {
           console.warn("⚠️ Logo non chargé:", e?.message ?? String(e));
         }
 
-        // Position logo (haut droite)
+        // ====== ENTETE : barre bleue + adresse + logo ======
+        const headerTopY = 0;
+        const topBarH = 16;     // barre bleue haut
+        const headerAreaH = 70; // zone header (adresse + logo)
+        const pageW = doc.page.width;
+
+        // Barre bleue (haut)
+        doc.save();
+        doc.fillColor("#0b5fa5").rect(0, headerTopY, pageW, topBarH).fill();
+        doc.restore();
+
+        // Adresse (gauche)
+        const addrLines = getCompanyAddressLines(offer);
+        doc.font("Helvetica").fontSize(8).fillColor("#111827");
+
+        const addrX = 50;
+        const addrY = topBarH + 10;
+        if (addrLines && addrLines.length > 0) {
+          doc.text(addrLines.join("\n"), addrX, addrY, {
+            width: pageW - 100 - 170, // laisse la place au logo à droite
+            lineGap: 1,
+          });
+        }
+
+        // Logo (droite)
         if (logoBuf) {
           const logoW = 140;
-          const x = doc.page.width - 50 - logoW;
-          const y = 20;
+          const x = pageW - 50 - logoW;
+          const y = topBarH + 10;
 
           try {
             doc.image(logoBuf, x, y, { width: logoW });
@@ -414,8 +571,15 @@ function generateOfferPDFWithLogo(offer) {
           }
         }
 
+        // Barre bleue (séparation sous entête)
+        doc.save();
+        doc.fillColor("#0b5fa5").rect(0, headerAreaH, pageW, 10).fill();
+        doc.restore();
+
+        // On descend sous l'entête
+        doc.y = headerAreaH + 25;
+
         // ====== TITRE ======
-        doc.moveDown(4);
         doc.font("Helvetica-Bold").fontSize(18).fillColor("#111827").text(
           offer?.title || "COMMERCIAL OFFER",
           { align: "left" }
@@ -425,19 +589,39 @@ function generateOfferPDFWithLogo(offer) {
         doc.font("Helvetica").fontSize(10).fillColor("#374151").text(
           `Date: ${
             offer?.date ||
-            new Date().toLocaleDateString("fr-FR", { year: "numeric", month: "long", day: "numeric" })
+            new Date().toLocaleDateString("fr-FR", {
+              year: "numeric",
+              month: "long",
+              day: "numeric",
+            })
           }`
         );
 
         doc.moveDown(1);
 
-        // ====== CLIENT ======
-        if (offer?.customerName || offer?.customerAddress || offer?.toPerson) {
+        // ====== CLIENT (dynamique) ======
+        // Option 1: offer.customerLines = ["INTEVA", "adresse...", "To: Mrs ..."]
+        // Option 2: offer.customerName / offer.customerAddress / offer.toPerson
+        const customerLines = Array.isArray(offer?.customerLines) ? offer.customerLines : [];
+
+        const hasCustomer =
+          customerLines.length > 0 ||
+          offer?.customerName ||
+          offer?.customerAddress ||
+          offer?.toPerson;
+
+        if (hasCustomer) {
           doc.font("Helvetica-Bold").fontSize(11).fillColor("#111827").text("Customer");
           doc.font("Helvetica").fontSize(10).fillColor("#374151");
-          if (offer?.customerName) doc.text(offer.customerName);
-          if (offer?.customerAddress) doc.text(offer.customerAddress);
-          if (offer?.toPerson) doc.text(`To: ${offer.toPerson}`);
+
+          if (customerLines.length > 0) {
+            doc.text(customerLines.join("\n"));
+          } else {
+            if (offer?.customerName) doc.text(offer.customerName);
+            if (offer?.customerAddress) doc.text(offer.customerAddress);
+            if (offer?.toPerson) doc.text(`To: ${offer.toPerson}`);
+          }
+
           doc.moveDown(1);
         }
 
@@ -445,7 +629,11 @@ function generateOfferPDFWithLogo(offer) {
         if (offer?.subject) {
           const y0 = doc.y;
           doc.save().fillColor("#dbeafe").rect(50, y0, doc.page.width - 100, 22).fill().restore();
-          doc.font("Helvetica-Bold").fontSize(10).fillColor("#111827").text(offer.subject, 58, y0 + 6);
+          doc.font("Helvetica-Bold").fontSize(10).fillColor("#111827").text(
+            offer.subject,
+            58,
+            y0 + 6
+          );
           doc.moveDown(2);
         }
 
@@ -497,6 +685,7 @@ function generateOfferPDFWithLogo(offer) {
     })();
   });
 }
+
 
 /* ============================ ROUTES ============================ */
 
