@@ -382,67 +382,25 @@ const COMPANY_ADDRESS_MAP = {
     "Phone : +33 5 49 62 25 00",
   ],
 
-  "avocarbon germany": [
-    "AVOCarbon Germany",
-    "AVOCarbon Germany GmbH",
-    "Talstrasse 112",
-    "D-60437 Frankfurt am Main",
-  ],
-  germany: [
-    "AVOCarbon Germany",
-    "AVOCarbon Germany GmbH",
-    "Talstrasse 112",
-    "D-60437 Frankfurt am Main",
-  ],
+  "avocarbon germany": ["AVOCarbon Germany", "AVOCarbon Germany GmbH", "Talstrasse 112", "D-60437 Frankfurt am Main"],
+  germany: ["AVOCarbon Germany", "AVOCarbon Germany GmbH", "Talstrasse 112", "D-60437 Frankfurt am Main"],
 
-  "avocarbon india": [
-    "AVOCarbon India",
-    "25/A2, Dairy Plant Road SIDCO Industrial Estate (NP)",
-    "Pattaravakka Ambattur Chennai – 600098",
-    "Tamilnadu",
-  ],
-  india: [
-    "AVOCarbon India",
-    "25/A2, Dairy Plant Road SIDCO Industrial Estate (NP)",
-    "Pattaravakka Ambattur Chennai – 600098",
-    "Tamilnadu",
-  ],
+  "avocarbon india": ["AVOCarbon India", "25/A2, Dairy Plant Road SIDCO Industrial Estate (NP)", "Pattaravakka Ambattur Chennai – 600098", "Tamilnadu"],
+  india: ["AVOCarbon India", "25/A2, Dairy Plant Road SIDCO Industrial Estate (NP)", "Pattaravakka Ambattur Chennai – 600098", "Tamilnadu"],
 
-  "avocarbon korea": [
-    "AVOCarbon Korea",
-    "306, Nongong-ro, Nongong-eup",
-    "Dalseong-Gun, Daegu",
-  ],
-  korea: [
-    "AVOCarbon Korea",
-    "306, Nongong-ro, Nongong-eup",
-    "Dalseong-Gun, Daegu",
-  ],
+  "avocarbon korea": ["AVOCarbon Korea", "306, Nongong-ro, Nongong-eup", "Dalseong-Gun, Daegu"],
+  korea: ["AVOCarbon Korea", "306, Nongong-ro, Nongong-eup", "Dalseong-Gun, Daegu"],
 
-  "assymex monterrey": [
-    "ASSYMEX MONTERREY",
-    "San Sebastian 110",
-    "Co. Los Lermas",
-    "GUADALUPE, N.L",
-    "Mexico 67190",
-  ],
-  monterrey: [
-    "ASSYMEX MONTERREY",
-    "San Sebastian 110",
-    "Co. Los Lermas",
-    "GUADALUPE, N.L",
-    "Mexico 67190",
-  ],
+  "assymex monterrey": ["ASSYMEX MONTERREY", "San Sebastian 110", "Co. Los Lermas", "GUADALUPE, N.L", "Mexico 67190"],
+  monterrey: ["ASSYMEX MONTERREY", "San Sebastian 110", "Co. Los Lermas", "GUADALUPE, N.L", "Mexico 67190"],
 
   tunisia: ["AVOCarbon", "Tunisia", "SCEET & SAME", "Zone industrielle Elfahs", "1140 Zaghouane"],
   tunis: ["AVOCarbon", "Tunisia", "SCEET & SAME", "Zone industrielle Elfahs", "1140 Zaghouane"],
 
   tianjin: ["AVOCarbon Tianjin", "Junling Road 17 # Beizhakou", "Jinnan District"],
-
   kunshan: ["AVOCarbon Kunshan", "N°9, Dongtinghu Road", "215335 Kunshan"],
 };
 
-// ✅ normalizeKey (tu demandais "normalizeky")
 function normalizeKey(v) {
   return String(v || "").trim().toLowerCase();
 }
@@ -453,8 +411,7 @@ function getCompanyAddressLines(offer) {
     normalizeKey(offer?.site) ||
     normalizeKey(offer?.entity) ||
     "france";
-
-  return COMPANY_ADDRESS_MAP[key] || COMPANY_ADDRESS_MAP["france"];
+  return COMPANY_ADDRESS_MAP[key] || COMPANY_ADDRESS_MAP.france;
 }
 
 // ====== ENTETE COMMUNE (toutes les pages) ======
@@ -463,7 +420,7 @@ function drawOfferHeader(doc, offer, logoBuf) {
 
   // ✅ plus d’espace en haut (réglable)
   const TOP_BAR_H = 16;       // barre bleue en haut
-  const HEADER_BLOCK_H = 90;  // zone adresse + logo (augmente si tu veux + d’espace)
+  const HEADER_BLOCK_H = 90;  // zone adresse + logo
   const BOTTOM_BAR_H = 10;    // barre bleue sous header
   const HEADER_TOTAL_H = TOP_BAR_H + HEADER_BLOCK_H + BOTTOM_BAR_H;
 
@@ -480,7 +437,7 @@ function drawOfferHeader(doc, offer, logoBuf) {
   doc.font("Helvetica").fontSize(8).fillColor("#111827");
   if (addrLines.length > 0) {
     doc.text(addrLines.join("\n"), addrX, addrY, {
-      width: pageW - 100 - 170, // espace logo à droite
+      width: pageW - 100 - 170,
       lineGap: 1,
     });
   }
@@ -495,14 +452,18 @@ function drawOfferHeader(doc, offer, logoBuf) {
 
   // Barre bleue sous entête
   doc.save();
-  doc
-    .fillColor("#0b5fa5")
-    .rect(0, TOP_BAR_H + HEADER_BLOCK_H, pageW, BOTTOM_BAR_H)
-    .fill();
+  doc.fillColor("#0b5fa5").rect(0, TOP_BAR_H + HEADER_BLOCK_H, pageW, BOTTOM_BAR_H).fill();
   doc.restore();
 
   // Curseur sous entête + espace
   doc.y = HEADER_TOTAL_H + 18;
+}
+
+// helper : convertit data:image/...;base64,XXXX en base64 brut
+function stripDataUrlPrefix(b64) {
+  const s = String(b64 || "");
+  const idx = s.indexOf(",");
+  return s.startsWith("data:image") && idx >= 0 ? s.slice(idx + 1) : s;
 }
 
 function generateOfferPDFWithLogo(offer) {
@@ -525,7 +486,7 @@ function generateOfferPDFWithLogo(offer) {
         doc.on("end", () => resolve(Buffer.concat(chunks)));
         doc.on("error", reject);
 
-        // ====== LOGO (local assets) ======
+        // ====== LOGO ======
         const logoPath = path.join(process.cwd(), "assets", "logo_avocarbon.jpg");
         let logoBuf = null;
 
@@ -537,48 +498,29 @@ function generateOfferPDFWithLogo(offer) {
           logoBuf = null;
         }
 
-        // ✅ HEADER sur page 1
+        // Header page 1 + toutes pages
         drawOfferHeader(doc, offer, logoBuf);
-
-        // ✅ HEADER sur toutes les pages suivantes
-        doc.on("pageAdded", () => {
-          drawOfferHeader(doc, offer, logoBuf);
-        });
+        doc.on("pageAdded", () => drawOfferHeader(doc, offer, logoBuf));
 
         // ====== TITRE ======
-        doc
-          .font("Helvetica-Bold")
-          .fontSize(18)
-          .fillColor("#111827")
-          .text(offer?.title || "COMMERCIAL OFFER", { align: "left" });
+        doc.font("Helvetica-Bold").fontSize(18).fillColor("#111827").text(
+          offer?.title || "COMMERCIAL OFFER",
+          { align: "left" }
+        );
 
         doc.moveDown(0.4);
-        doc
-          .font("Helvetica")
-          .fontSize(10)
-          .fillColor("#374151")
-          .text(
-            `Date: ${
-              offer?.date ||
-              new Date().toLocaleDateString("fr-FR", {
-                year: "numeric",
-                month: "long",
-                day: "numeric",
-              })
-            }`
-          );
+        doc.font("Helvetica").fontSize(10).fillColor("#374151").text(
+          `Date: ${
+            offer?.date ||
+            new Date().toLocaleDateString("fr-FR", { year: "numeric", month: "long", day: "numeric" })
+          }`
+        );
 
         doc.moveDown(1);
 
-        // ====== CUSTOMER (DYNAMIQUE) ======
-        // Option A: offer.customerLines = ["INTEVA", "addr...", "To: ..."]
-        // Option B: offer.customerName / offer.customerAddress / offer.toPerson
+        // ====== CUSTOMER ======
         const customerLines = Array.isArray(offer?.customerLines) ? offer.customerLines : [];
-        const hasCustomer =
-          customerLines.length > 0 ||
-          offer?.customerName ||
-          offer?.customerAddress ||
-          offer?.toPerson;
+        const hasCustomer = customerLines.length > 0 || offer?.customerName || offer?.customerAddress || offer?.toPerson;
 
         if (hasCustomer) {
           doc.font("Helvetica-Bold").fontSize(11).fillColor("#111827").text("Customer");
@@ -598,39 +540,24 @@ function generateOfferPDFWithLogo(offer) {
         if (offer?.subject) {
           const y0 = doc.y;
           doc.save().fillColor("#dbeafe").rect(50, y0, doc.page.width - 100, 22).fill().restore();
-          doc
-            .font("Helvetica-Bold")
-            .fontSize(10)
-            .fillColor("#111827")
-            .text(offer.subject, 58, y0 + 6);
+          doc.font("Helvetica-Bold").fontSize(10).fillColor("#111827").text(offer.subject, 58, y0 + 6);
           doc.moveDown(2);
         }
 
         // ====== INTRO ======
         if (offer?.intro) {
-          doc.font("Helvetica").fontSize(11).fillColor("#111827").text(offer.intro, {
-            align: "justify",
-            lineGap: 3,
-          });
+          doc.font("Helvetica").fontSize(11).fillColor("#111827").text(offer.intro, { align: "justify", lineGap: 3 });
           doc.moveDown(1);
         }
 
         // ====== SECTIONS ======
         const sections = Array.isArray(offer?.sections) ? offer.sections : [];
         for (const s of sections) {
-          // laisse de la marge pour éviter collision bas de page
           if (doc.y > doc.page.height - 160) doc.addPage();
 
-          doc
-            .font("Helvetica-Bold")
-            .fontSize(12)
-            .fillColor("#1e40af")
-            .text(s.title || "Section");
+          doc.font("Helvetica-Bold").fontSize(12).fillColor("#1e40af").text(s.title || "Section");
           doc.moveDown(0.3);
-          doc.font("Helvetica").fontSize(11).fillColor("#111827").text(s.content || "", {
-            align: "justify",
-            lineGap: 3,
-          });
+          doc.font("Helvetica").fontSize(11).fillColor("#111827").text(s.content || "", { align: "justify", lineGap: 3 });
           doc.moveDown(0.8);
         }
 
@@ -641,9 +568,45 @@ function generateOfferPDFWithLogo(offer) {
         if (offer?.signatureName) doc.text(offer.signatureName);
         if (offer?.signatureTitle) doc.text(offer.signatureTitle);
 
-        // ✅ Pagination : SUPPRIMÉE totalement (comme tu as demandé)
-        // (ne rien écrire en bas)
+        // ====== IMAGE DANS LE PDF (ANNEXE À LA FIN) ======
+        // ✅ Tu envoies offer.appendixImageBase64 dans le JSON
+        if (offer?.appendixImageBase64) {
+          doc.addPage(); // nouvelle page (avec header auto)
+          doc.moveDown(0.5);
 
+          doc.font("Helvetica-Bold").fontSize(12).fillColor("#111827").text(
+            offer?.appendixImageTitle || "Appendix - Drawing / Photo"
+          );
+          doc.moveDown(0.5);
+
+          try {
+            const cleaned = stripDataUrlPrefix(offer.appendixImageBase64);
+            const imgBuf = Buffer.from(cleaned, "base64");
+
+            validateImageBuffer(imgBuf);
+
+            // normalisation -> évite les problèmes PDFKit
+            const normalized = await normalizeImageBuffer(imgBuf, { format: "png" });
+
+            const maxW = doc.page.width - 100;
+            const maxH = 420;
+            doc.image(normalized, { fit: [maxW, maxH], align: "center" });
+
+            doc.moveDown(0.5);
+            if (offer?.appendixImageCaption) {
+              doc.font("Helvetica-Oblique").fontSize(9).fillColor("#6b7280").text(
+                offer.appendixImageCaption,
+                { align: "center" }
+              );
+            }
+          } catch (e) {
+            const msg = e?.message ?? String(e);
+            doc.font("Helvetica").fontSize(10).fillColor("#ef4444").text("⚠️ Appendix image not loaded.");
+            doc.font("Helvetica").fontSize(8).fillColor("#9ca3af").text(`(${msg})`);
+          }
+        }
+
+        // ✅ Pagination supprimée : rien en bas
         doc.end();
       } catch (err) {
         reject(err);
@@ -651,6 +614,7 @@ function generateOfferPDFWithLogo(offer) {
     })();
   });
 }
+
 
 
 /* ============================ ROUTES ============================ */
