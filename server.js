@@ -839,6 +839,220 @@ app.post("/api/generate-excel-and-send", async (req, res) => {
     });
   }
 });
+function generateOfferPDFWithLogo(offer) {
+  return new Promise((resolve, reject) => {
+    (async () => {
+      try {
+        const doc = new PDFDocument({
+          margin: 50,
+          size: "A4",
+          bufferPages: true,
+          info: {
+            Title: offer?.subject || "Commercial Offer",
+            Author: "AVOCarbon",
+            Subject: offer?.subject || "Offer",
+          },
+        });
+
+        const chunks = [];
+        doc.on("data", (c) => chunks.push(c));
+        doc.on("end", () => resolve(Buffer.concat(chunks)));
+        doc.on("error", reject);
+
+        // ====== LOGO AVOCARBON (depuis /assets) ======
+        const logoPath = path.join(process.cwd(), "assets", "logo_avocarbon.jpg");
+        let logoBuf = null;
+
+        try {
+          logoBuf = await loadImageToBuffer({ imagePath: logoPath });
+          validateImageBuffer(logoBuf);
+        } catch (e) {
+          console.warn("⚠️ Logo non chargé:", e?.message ?? String(e));
+        }
+
+        // Position logo (haut droite)
+        if (logoBuf) {
+          const logoW = 140;
+          const x = doc.page.width - 50 - logoW;
+          const y = 20;
+
+          try {
+            doc.image(logoBuf, x, y, { width: logoW });
+          } catch (_err) {
+            const normalized = await normalizeImageBuffer(logoBuf, { format: "png" });
+            doc.image(normalized, x, y, { width: logoW });
+          }
+        }
+
+        // ====== CONTENU OFFRE (format simple et fixe) ======
+        doc.moveDown(4);
+
+        doc.font("Helvetica-Bold").fontSize(16).fillColor("#111827").text(
+          offer?.title || "COMMERCIAL OFFER",
+          { align: "left" }
+        );
+
+        doc.moveDown(0.5);
+
+        doc.font("Helvetica").fontSize(10).fillColor("#374151").text(
+          `Date: ${
+            offer?.date ||
+            new Date().toLocaleDateString("fr-FR", { year: "numeric", month: "long", day: "numeric" })
+          }`
+        );
+
+        doc.moveDown(1);
+
+        // Infos client
+        if (offer?.customerName || offer?.customerAddress || offer?.toPerson) {
+          doc.font("Helvetica-Bold").fontSize(11).fillColor("#111827").text("Customer");
+          doc.font("Helvetica").fontSize(10).fillColor("#374151");
+          if (offer?.customerName) doc.text(offer.customerName);
+          if (offer?.customerAddress) doc.text(offer.customerAddress);
+          if (offer?.toPerson) doc.text(`To: ${offer.toPerson}`);
+          doc.moveDown(1);
+        }
+
+        // Sujet
+        if (offer?.subject) {
+          doc.save().fillColor("#dbeafe").rect(50, doc.y, doc.page.width - 100, 22).fill().restore();
+          doc.font("Helvetica-Bold").fontSize(10).fillColor("#111827").text(
+            offer.subject,
+            58,
+            doc.y + 6
+          );
+          doc.moveDown(2);
+        }
+
+        // Intro
+        if (offer?.intro) {
+          doc.font("Helvetica").fontSize(11).fillColor("#111827").text(offer.intro, {
+            align: "justify",
+            lineGap: 3,
+          });
+          doc.moveDown(1);
+        }
+
+        // Sections
+        const sections = Array.isArray(offer?.sections) ? offer.sections : [];
+        for (const s of sections) {
+          if (doc.y > doc.page.height - 140) doc.addPage();
+
+          doc.font("Helvetica-Bold").fontSize(12).fillColor("#1e40af").text(s.title || "Section");
+          doc.moveDown(0.3);
+          doc.font("Helvetica").fontSize(11).fillColor("#111827").text(s.content || "", {
+            align: "justify",
+            lineGap: 3,
+          });
+          doc.moveDown(0.8);
+        }
+// ========== ROUTE : GÉNÉRATION OFFRE PDF + EMAIL (avec logo) ==========
+app.post("/api/generate-offer-and-send", async (req, res) => {
+  try {
+    const { email, subject, offer, cc } = req.body || {};
+
+    if (!email || !subject || !offer) {
+      return res.status(400).json({
+        success: false,
+        error: "Données manquantes",
+        details: "Envoyez email, subject, offer",
+      });
+    }
+
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ success: false, error: "Email invalide" });
+    }
+
+    if (cc && !isValidEmail(cc)) {
+      return res.status(400).json({
+        success: false,
+        error: "Adresse email CC invalide",
+        details: `cc = ${cc}`,
+      });
+    }
+
+    // Sujet dans l'offre (bande SUBJECT)
+    offer.subject = offer.subject || subject;
+
+    const pdfBuffer = await generateOfferPDFWithLogo(offer);
+
+    const pdfName = `offre_${Date.now()}.pdf`;
+
+    const html = `
+      <!DOCTYPE html>
+      <html>
+        <body style="font-family: Arial, sans-serif; line-height:1.6; color:#111827;">
+          <h2 style="margin:0 0 8px 0;">📄 Votre offre est prête</h2>
+          <div style="background:#e0e7ff;padding:12px;border-left:4px solid #667eea;border-radius:6px;margin:12px 0;">
+            <strong>📧 Sujet :</strong> ${escapeHtml(subject)}<br>
+            <strong>📅 Date :</strong> ${new Date().toLocaleDateString("fr-FR")}
+          </div>
+          <p>Vous trouverez l’offre commerciale en pièce jointe (PDF).</p>
+          <p style="color:#6b7280;font-size:12px">© ${new Date().getFullYear()} ${EMAIL_FROM_NAME}</p>
+        </body>
+      </html>
+    `;
+
+    await transporter.sendMail({
+      from: { name: EMAIL_FROM_NAME, address: EMAIL_FROM },
+      to: email,
+      cc: cc || undefined,
+      subject,
+      html,
+      attachments: [
+        {
+          filename: pdfName,
+          content: pdfBuffer,
+          contentType: "application/pdf",
+        },
+      ],
+    });
+
+    return res.json({
+      success: true,
+      message: "Offre générée et envoyée avec succès",
+      details: {
+        email,
+        cc: cc || null,
+        filename: pdfName,
+        pdfSize: `${(pdfBuffer.length / 1024).toFixed(2)} KB`,
+      },
+    });
+  } catch (err) {
+    console.error("❌ Erreur génération/envoi OFFRE:", err?.stack || String(err));
+    return res.status(500).json({
+      success: false,
+      error: "Erreur lors du traitement",
+      details: err?.message ?? String(err),
+    });
+  }
+});
+
+        // Signature
+        doc.moveDown(1);
+        if (offer?.closing) doc.text(offer.closing);
+        if (offer?.signatureName) doc.text(offer.signatureName);
+        if (offer?.signatureTitle) doc.text(offer.signatureTitle);
+
+        // Pagination
+        const range = doc.bufferedPageRange();
+        for (let i = 0; i < range.count; i++) {
+          doc.switchToPage(i);
+          doc.fontSize(8).fillColor("#9ca3af").text(
+            `Page ${i + 1} sur ${range.count}`,
+            50,
+            doc.page.height - 50,
+            { align: "center", width: doc.page.width - 100 }
+          );
+        }
+
+        doc.end();
+      } catch (err) {
+        reject(err);
+      }
+    })();
+  });
+}
 
 // ========== ROUTE : GÉNÉRATION PDF + EMAIL ==========
 app.post("/api/generate-and-send", async (req, res) => {
