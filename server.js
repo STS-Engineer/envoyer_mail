@@ -369,9 +369,8 @@ async function sendEmailWithPdf({ to, subject, messageHtml, pdfBuffer, pdfFilena
   });
 }
 
-// ====== ADRESSES ENTETE (selon site) ======
+/// ====== ADRESSES ENTETE (selon site) ======
 const COMPANY_ADDRESS_MAP = {
-  // FRANCE
   "avocarbon france": [
     "AVOCarbon France - 9 rue des imprimeurs - Z.I. de la République n° 1 - 86000 POITIERS France",
     "au capital de 3 224 460 € - RCS Poitiers B339 348 450 – Code APE 2732 Z – N° identification TVA FR 01339348450",
@@ -383,7 +382,6 @@ const COMPANY_ADDRESS_MAP = {
     "Phone : +33 5 49 62 25 00",
   ],
 
-  // GERMANY
   "avocarbon germany": [
     "AVOCarbon Germany",
     "AVOCarbon Germany GmbH",
@@ -397,7 +395,6 @@ const COMPANY_ADDRESS_MAP = {
     "D-60437 Frankfurt am Main",
   ],
 
-  // INDIA
   "avocarbon india": [
     "AVOCarbon India",
     "25/A2, Dairy Plant Road SIDCO Industrial Estate (NP)",
@@ -411,7 +408,6 @@ const COMPANY_ADDRESS_MAP = {
     "Tamilnadu",
   ],
 
-  // KOREA
   "avocarbon korea": [
     "AVOCarbon Korea",
     "306, Nongong-ro, Nongong-eup",
@@ -423,7 +419,6 @@ const COMPANY_ADDRESS_MAP = {
     "Dalseong-Gun, Daegu",
   ],
 
-  // ASSYMEX MONTERREY
   "assymex monterrey": [
     "ASSYMEX MONTERREY",
     "San Sebastian 110",
@@ -439,14 +434,6 @@ const COMPANY_ADDRESS_MAP = {
     "Mexico 67190",
   ],
 
-  // TUNISIA
-  "avocarbon tunisia": [
-    "AVOCarbon",
-    "Tunisia",
-    "SCEET & SAME",
-    "Zone industrielle Elfahs",
-    "1140 Zaghouane",
-  ],
   "tunisia": [
     "AVOCarbon",
     "Tunisia",
@@ -462,25 +449,13 @@ const COMPANY_ADDRESS_MAP = {
     "1140 Zaghouane",
   ],
 
-  // TIANJIN
   "tianjin": [
     "AVOCarbon Tianjin",
     "Junling Road 17 # Beizhakou",
     "Jinnan District",
   ],
-  "avocarbon tianjin": [
-    "AVOCarbon Tianjin",
-    "Junling Road 17 # Beizhakou",
-    "Jinnan District",
-  ],
 
-  // KUNSHAN
   "kunshan": [
-    "AVOCarbon Kunshan",
-    "N°9, Dongtinghu Road",
-    "215335 Kunshan",
-  ],
-  "avocarbon kunshan": [
     "AVOCarbon Kunshan",
     "N°9, Dongtinghu Road",
     "215335 Kunshan",
@@ -492,7 +467,6 @@ function normalizeKey(v) {
 }
 
 function getCompanyAddressLines(offer) {
-  // tu peux envoyer offer.company / offer.site / offer.entity
   const key =
     normalizeKey(offer?.company) ||
     normalizeKey(offer?.site) ||
@@ -522,7 +496,7 @@ function generateOfferPDFWithLogo(offer) {
         doc.on("end", () => resolve(Buffer.concat(chunks)));
         doc.on("error", reject);
 
-        // ====== LOGO AVOCARBON (local assets) ======
+        // ====== LOGO ======
         const logoPath = path.join(process.cwd(), "assets", "logo_avocarbon.jpg");
         let logoBuf = null;
 
@@ -533,51 +507,66 @@ function generateOfferPDFWithLogo(offer) {
           console.warn("⚠️ Logo non chargé:", e?.message ?? String(e));
         }
 
-        // ====== ENTETE : barre bleue + adresse + logo ======
-        const headerTopY = 0;
-        const topBarH = 16;     // barre bleue haut
-        const headerAreaH = 70; // zone header (adresse + logo)
+        // ====== HEADER DRAWER (utilisé sur toutes les pages) ======
         const pageW = doc.page.width;
+        const topBarH = 16;        // barre bleue en haut
+        const headerBlockH = 78;   // zone header (adresse + logo)
+        const bottomBarH = 10;     // barre bleue sous header
+        const headerTotalH = headerBlockH + bottomBarH; // hauteur totale
 
-        // Barre bleue (haut)
-        doc.save();
-        doc.fillColor("#0b5fa5").rect(0, headerTopY, pageW, topBarH).fill();
-        doc.restore();
+        function drawHeader() {
+          // Barre bleue tout en haut
+          doc.save();
+          doc.fillColor("#0b5fa5").rect(0, 0, pageW, topBarH).fill();
+          doc.restore();
 
-        // Adresse (gauche)
-        const addrLines = getCompanyAddressLines(offer);
-        doc.font("Helvetica").fontSize(8).fillColor("#111827");
+          // Adresse à gauche
+          const addrLines = getCompanyAddressLines(offer) || [];
+          const addrX = 50;
+          const addrY = topBarH + 10;
 
-        const addrX = 50;
-        const addrY = topBarH + 10;
-        if (addrLines && addrLines.length > 0) {
-          doc.text(addrLines.join("\n"), addrX, addrY, {
-            width: pageW - 100 - 170, // laisse la place au logo à droite
-            lineGap: 1,
-          });
-        }
-
-        // Logo (droite)
-        if (logoBuf) {
-          const logoW = 140;
-          const x = pageW - 50 - logoW;
-          const y = topBarH + 10;
-
-          try {
-            doc.image(logoBuf, x, y, { width: logoW });
-          } catch (_err) {
-            const normalized = await normalizeImageBuffer(logoBuf, { format: "png" });
-            doc.image(normalized, x, y, { width: logoW });
+          doc.font("Helvetica").fontSize(8).fillColor("#111827");
+          if (addrLines.length > 0) {
+            doc.text(addrLines.join("\n"), addrX, addrY, {
+              width: pageW - 100 - 170, // espace logo à droite
+              lineGap: 1,
+            });
           }
+
+          // Logo à droite
+          if (logoBuf) {
+            const logoW = 140;
+            const x = pageW - 50 - logoW;
+            const y = topBarH + 10;
+
+            try {
+              doc.image(logoBuf, x, y, { width: logoW });
+            } catch (_err) {
+              // fallback si JPG pose souci
+              // (si normalizeImageBuffer existe)
+              // eslint-disable-next-line no-undef
+              // const normalized = await normalizeImageBuffer(logoBuf, { format: "png" });
+              // doc.image(normalized, x, y, { width: logoW });
+              doc.image(logoBuf, x, y, { width: logoW });
+            }
+          }
+
+          // Barre bleue sous l'entête
+          doc.save();
+          doc.fillColor("#0b5fa5").rect(0, headerBlockH, pageW, bottomBarH).fill();
+          doc.restore();
+
+          // Position curseur sous l'entête + espace
+          doc.y = headerTotalH + 25;
         }
 
-        // Barre bleue (séparation sous entête)
-        doc.save();
-        doc.fillColor("#0b5fa5").rect(0, headerAreaH, pageW, 10).fill();
-        doc.restore();
+        // Quand une nouvelle page est ajoutée => redessiner header
+        doc.on("pageAdded", () => {
+          drawHeader();
+        });
 
-        // On descend sous l'entête
-        doc.y = headerAreaH + 25;
+        // Dessiner header première page
+        drawHeader();
 
         // ====== TITRE ======
         doc.font("Helvetica-Bold").fontSize(18).fillColor("#111827").text(
@@ -599,16 +588,10 @@ function generateOfferPDFWithLogo(offer) {
 
         doc.moveDown(1);
 
-        // ====== CLIENT (dynamique) ======
-        // Option 1: offer.customerLines = ["INTEVA", "adresse...", "To: Mrs ..."]
-        // Option 2: offer.customerName / offer.customerAddress / offer.toPerson
+        // ====== CUSTOMER (DYNAMIQUE) ======
         const customerLines = Array.isArray(offer?.customerLines) ? offer.customerLines : [];
-
         const hasCustomer =
-          customerLines.length > 0 ||
-          offer?.customerName ||
-          offer?.customerAddress ||
-          offer?.toPerson;
+          customerLines.length > 0 || offer?.customerName || offer?.customerAddress || offer?.toPerson;
 
         if (hasCustomer) {
           doc.font("Helvetica-Bold").fontSize(11).fillColor("#111827").text("Customer");
@@ -628,7 +611,7 @@ function generateOfferPDFWithLogo(offer) {
         // ====== SUBJECT (bande bleue) ======
         if (offer?.subject) {
           const y0 = doc.y;
-          doc.save().fillColor("#dbeafe").rect(50, y0, doc.page.width - 100, 22).fill().restore();
+          doc.save().fillColor("#dbeafe").rect(50, y0, pageW - 100, 22).fill().restore();
           doc.font("Helvetica-Bold").fontSize(10).fillColor("#111827").text(
             offer.subject,
             58,
@@ -649,7 +632,7 @@ function generateOfferPDFWithLogo(offer) {
         // ====== SECTIONS ======
         const sections = Array.isArray(offer?.sections) ? offer.sections : [];
         for (const s of sections) {
-          if (doc.y > doc.page.height - 140) doc.addPage();
+          if (doc.y > doc.page.height - 160) doc.addPage();
 
           doc.font("Helvetica-Bold").fontSize(12).fillColor("#1e40af").text(s.title || "Section");
           doc.moveDown(0.3);
@@ -662,19 +645,20 @@ function generateOfferPDFWithLogo(offer) {
 
         // ====== SIGNATURE ======
         doc.moveDown(1);
+        doc.font("Helvetica").fontSize(11).fillColor("#111827");
         if (offer?.closing) doc.text(offer.closing);
         if (offer?.signatureName) doc.text(offer.signatureName);
         if (offer?.signatureTitle) doc.text(offer.signatureTitle);
 
-        // Pagination
+        // ====== PAGINATION (corrigée) ======
         const range = doc.bufferedPageRange();
         for (let i = 0; i < range.count; i++) {
           doc.switchToPage(i);
           doc.fontSize(8).fillColor("#9ca3af").text(
-            `Page ${i + 1} sur ${range.count}`,
+            `Page ${i + 1}`,               // ✅ plus de "sur X"
             50,
             doc.page.height - 50,
-            { align: "center", width: doc.page.width - 100 }
+            { align: "center", width: pageW - 100 }
           );
         }
 
