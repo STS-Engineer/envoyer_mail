@@ -592,13 +592,7 @@ function generateOfferPDFWithLogo(offer) {
             const maxH = 420;
             doc.image(normalized, { fit: [maxW, maxH], align: "center" });
 
-            doc.moveDown(0.5);
-            if (offer?.appendixImageCaption) {
-              doc.font("Helvetica-Oblique").fontSize(9).fillColor("#6b7280").text(
-                offer.appendixImageCaption,
-                { align: "center" }
-              );
-            }
+            
           } catch (e) {
             const msg = e?.message ?? String(e);
             doc.font("Helvetica").fontSize(10).fillColor("#ef4444").text("⚠️ Appendix image not loaded.");
