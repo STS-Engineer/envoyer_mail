@@ -382,17 +382,53 @@ const COMPANY_ADDRESS_MAP = {
     "Phone : +33 5 49 62 25 00",
   ],
 
-  "avocarbon germany": ["AVOCarbon Germany", "AVOCarbon Germany GmbH", "Talstrasse 112", "D-60437 Frankfurt am Main"],
-  germany: ["AVOCarbon Germany", "AVOCarbon Germany GmbH", "Talstrasse 112", "D-60437 Frankfurt am Main"],
+  "avocarbon germany": [
+    "AVOCarbon Germany",
+    "AVOCarbon Germany GmbH",
+    "Talstrasse 112",
+    "D-60437 Frankfurt am Main",
+  ],
+  germany: [
+    "AVOCarbon Germany",
+    "AVOCarbon Germany GmbH",
+    "Talstrasse 112",
+    "D-60437 Frankfurt am Main",
+  ],
 
-  "avocarbon india": ["AVOCarbon India", "25/A2, Dairy Plant Road SIDCO Industrial Estate (NP)", "Pattaravakka Ambattur Chennai – 600098", "Tamilnadu"],
-  india: ["AVOCarbon India", "25/A2, Dairy Plant Road SIDCO Industrial Estate (NP)", "Pattaravakka Ambattur Chennai – 600098", "Tamilnadu"],
+  "avocarbon india": [
+    "AVOCarbon India",
+    "25/A2, Dairy Plant Road SIDCO Industrial Estate (NP)",
+    "Pattaravakka Ambattur Chennai – 600098",
+    "Tamilnadu",
+  ],
+  india: [
+    "AVOCarbon India",
+    "25/A2, Dairy Plant Road SIDCO Industrial Estate (NP)",
+    "Pattaravakka Ambattur Chennai – 600098",
+    "Tamilnadu",
+  ],
 
-  "avocarbon korea": ["AVOCarbon Korea", "306, Nongong-ro, Nongong-eup", "Dalseong-Gun, Daegu"],
+  "avocarbon korea": [
+    "AVOCarbon Korea",
+    "306, Nongong-ro, Nongong-eup",
+    "Dalseong-Gun, Daegu",
+  ],
   korea: ["AVOCarbon Korea", "306, Nongong-ro, Nongong-eup", "Dalseong-Gun, Daegu"],
 
-  "assymex monterrey": ["ASSYMEX MONTERREY", "San Sebastian 110", "Co. Los Lermas", "GUADALUPE, N.L", "Mexico 67190"],
-  monterrey: ["ASSYMEX MONTERREY", "San Sebastian 110", "Co. Los Lermas", "GUADALUPE, N.L", "Mexico 67190"],
+  "assymex monterrey": [
+    "ASSYMEX MONTERREY",
+    "San Sebastian 110",
+    "Co. Los Lermas",
+    "GUADALUPE, N.L",
+    "Mexico 67190",
+  ],
+  monterrey: [
+    "ASSYMEX MONTERREY",
+    "San Sebastian 110",
+    "Co. Los Lermas",
+    "GUADALUPE, N.L",
+    "Mexico 67190",
+  ],
 
   tunisia: ["AVOCarbon", "Tunisia", "SCEET & SAME", "Zone industrielle Elfahs", "1140 Zaghouane"],
   tunis: ["AVOCarbon", "Tunisia", "SCEET & SAME", "Zone industrielle Elfahs", "1140 Zaghouane"],
@@ -411,6 +447,7 @@ function getCompanyAddressLines(offer) {
     normalizeKey(offer?.site) ||
     normalizeKey(offer?.entity) ||
     "france";
+
   return COMPANY_ADDRESS_MAP[key] || COMPANY_ADDRESS_MAP.france;
 }
 
@@ -419,9 +456,9 @@ function drawOfferHeader(doc, offer, logoBuf) {
   const pageW = doc.page.width;
 
   // ✅ plus d’espace en haut (réglable)
-  const TOP_BAR_H = 16;       // barre bleue en haut
-  const HEADER_BLOCK_H = 90;  // zone adresse + logo
-  const BOTTOM_BAR_H = 10;    // barre bleue sous header
+  const TOP_BAR_H = 16; // barre bleue en haut
+  const HEADER_BLOCK_H = 90; // zone adresse + logo
+  const BOTTOM_BAR_H = 10; // barre bleue sous header
   const HEADER_TOTAL_H = TOP_BAR_H + HEADER_BLOCK_H + BOTTOM_BAR_H;
 
   // Barre bleue haut
@@ -459,11 +496,74 @@ function drawOfferHeader(doc, offer, logoBuf) {
   doc.y = HEADER_TOTAL_H + 18;
 }
 
-// helper : convertit data:image/...;base64,XXXX en base64 brut
+// ================= APPENDIX IMAGE HELPERS =================
+
+// helper : enlève le prefix "data:image/...;base64,"
 function stripDataUrlPrefix(b64) {
-  const s = String(b64 || "");
-  const idx = s.indexOf(",");
-  return s.startsWith("data:image") && idx >= 0 ? s.slice(idx + 1) : s;
+  let s = String(b64 || "").trim();
+  if (s.startsWith("data:")) {
+    const comma = s.indexOf(",");
+    s = comma >= 0 ? s.slice(comma + 1) : s;
+  }
+  // nettoyage base64 (espaces + caractères invalides)
+  s = s.replace(/[\s\n\r\t]/g, "").replace(/[^A-Za-z0-9+/=]/g, "");
+  return s;
+}
+
+function detectImageTypeFromBuffer(buf) {
+  if (!buf || buf.length < 12) return "unknown";
+  const isPNG = buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47;
+  const isJPG = buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
+  const isGIF = buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46;
+  const isWEBP =
+    buf[0] === 0x52 &&
+    buf[1] === 0x49 &&
+    buf[2] === 0x46 &&
+    buf[3] === 0x46 &&
+    buf[8] === 0x57 &&
+    buf[9] === 0x45 &&
+    buf[10] === 0x42 &&
+    buf[11] === 0x50;
+
+  if (isPNG) return "png";
+  if (isJPG) return "jpeg";
+  if (isGIF) return "gif";
+  if (isWEBP) return "webp";
+  return "unknown";
+}
+
+// convertit n'importe quelle image (webp/gif/heic/...) en PNG safe pour PDFKit
+async function toPngBufferAny(buf) {
+  return sharp(buf, { failOn: "none" }).rotate().png({ compressionLevel: 9 }).toBuffer();
+}
+
+async function base64ToPngBufferSafe(imageBase64) {
+  const cleaned = stripDataUrlPrefix(imageBase64);
+  if (!cleaned) throw new Error("Base64 vide après nettoyage");
+
+  const raw = Buffer.from(cleaned, "base64");
+  if (!raw || raw.length < 32) throw new Error("Base64 invalide ou tronquée");
+
+  // on force PNG pour éviter "unsupported image format" dans PDFKit
+  const t = detectImageTypeFromBuffer(raw);
+  if (t === "png") return raw;
+  return await toPngBufferAny(raw);
+}
+
+async function resolveOfferAppendixImagePng(offer) {
+  // 1) base64
+  if (offer?.appendixImageBase64) {
+    return await base64ToPngBufferSafe(offer.appendixImageBase64);
+  }
+
+  // 2) URL (si tu veux l'activer plus tard)
+  if (offer?.appendixImageUrl) {
+    const buf = await fetchUrlToBuffer(offer.appendixImageUrl);
+    if (!buf || buf.length < 32) throw new Error("Image téléchargée vide");
+    return await toPngBufferAny(buf);
+  }
+
+  return null;
 }
 
 function generateOfferPDFWithLogo(offer) {
@@ -503,16 +603,21 @@ function generateOfferPDFWithLogo(offer) {
         doc.on("pageAdded", () => drawOfferHeader(doc, offer, logoBuf));
 
         // ====== TITRE ======
-        doc.font("Helvetica-Bold").fontSize(18).fillColor("#111827").text(
-          offer?.title || "COMMERCIAL OFFER",
-          { align: "left" }
-        );
+        doc
+          .font("Helvetica-Bold")
+          .fontSize(18)
+          .fillColor("#111827")
+          .text(offer?.title || "COMMERCIAL OFFER", { align: "left" });
 
         doc.moveDown(0.4);
         doc.font("Helvetica").fontSize(10).fillColor("#374151").text(
           `Date: ${
             offer?.date ||
-            new Date().toLocaleDateString("fr-FR", { year: "numeric", month: "long", day: "numeric" })
+            new Date().toLocaleDateString("fr-FR", {
+              year: "numeric",
+              month: "long",
+              day: "numeric",
+            })
           }`
         );
 
@@ -520,7 +625,11 @@ function generateOfferPDFWithLogo(offer) {
 
         // ====== CUSTOMER ======
         const customerLines = Array.isArray(offer?.customerLines) ? offer.customerLines : [];
-        const hasCustomer = customerLines.length > 0 || offer?.customerName || offer?.customerAddress || offer?.toPerson;
+        const hasCustomer =
+          customerLines.length > 0 ||
+          offer?.customerName ||
+          offer?.customerAddress ||
+          offer?.toPerson;
 
         if (hasCustomer) {
           doc.font("Helvetica-Bold").fontSize(11).fillColor("#111827").text("Customer");
@@ -540,13 +649,20 @@ function generateOfferPDFWithLogo(offer) {
         if (offer?.subject) {
           const y0 = doc.y;
           doc.save().fillColor("#dbeafe").rect(50, y0, doc.page.width - 100, 22).fill().restore();
-          doc.font("Helvetica-Bold").fontSize(10).fillColor("#111827").text(offer.subject, 58, y0 + 6);
+          doc
+            .font("Helvetica-Bold")
+            .fontSize(10)
+            .fillColor("#111827")
+            .text(offer.subject, 58, y0 + 6);
           doc.moveDown(2);
         }
 
         // ====== INTRO ======
         if (offer?.intro) {
-          doc.font("Helvetica").fontSize(11).fillColor("#111827").text(offer.intro, { align: "justify", lineGap: 3 });
+          doc.font("Helvetica").fontSize(11).fillColor("#111827").text(offer.intro, {
+            align: "justify",
+            lineGap: 3,
+          });
           doc.moveDown(1);
         }
 
@@ -557,7 +673,10 @@ function generateOfferPDFWithLogo(offer) {
 
           doc.font("Helvetica-Bold").fontSize(12).fillColor("#1e40af").text(s.title || "Section");
           doc.moveDown(0.3);
-          doc.font("Helvetica").fontSize(11).fillColor("#111827").text(s.content || "", { align: "justify", lineGap: 3 });
+          doc.font("Helvetica").fontSize(11).fillColor("#111827").text(s.content || "", {
+            align: "justify",
+            lineGap: 3,
+          });
           doc.moveDown(0.8);
         }
 
@@ -569,33 +688,33 @@ function generateOfferPDFWithLogo(offer) {
         if (offer?.signatureTitle) doc.text(offer.signatureTitle);
 
         // ====== IMAGE DANS LE PDF (ANNEXE À LA FIN) ======
-        // ✅ Tu envoies offer.appendixImageBase64 dans le JSON
-        if (offer?.appendixImageBase64) {
-          doc.addPage(); // nouvelle page (avec header auto)
+        // ✅ Image intégrée dans le PDF, sans caption (comme tu as demandé)
+        if (offer?.appendixImageBase64 || offer?.appendixImageUrl) {
+          doc.addPage(); // nouvelle page (header auto)
           doc.moveDown(0.5);
 
-          doc.font("Helvetica-Bold").fontSize(12).fillColor("#111827").text(
-            offer?.appendixImageTitle || "Appendix - Drawing / Photo"
-          );
+          doc
+            .font("Helvetica-Bold")
+            .fontSize(12)
+            .fillColor("#111827")
+            .text(offer?.appendixImageTitle || "Appendix - Drawing / Photo");
           doc.moveDown(0.5);
 
           try {
-            const cleaned = stripDataUrlPrefix(offer.appendixImageBase64);
-            const imgBuf = Buffer.from(cleaned, "base64");
+            const pngBuf = await resolveOfferAppendixImagePng(offer);
+            if (!pngBuf) throw new Error("Appendix image not provided");
 
-            validateImageBuffer(imgBuf);
-
-            // normalisation -> évite les problèmes PDFKit
-            const normalized = await normalizeImageBuffer(imgBuf, { format: "png" });
+            // optionnel: validation (va afficher magic bytes)
+            validateImageBuffer(pngBuf);
 
             const maxW = doc.page.width - 100;
             const maxH = 420;
-            doc.image(normalized, { fit: [maxW, maxH], align: "center" });
+            doc.image(pngBuf, { fit: [maxW, maxH], align: "center" });
 
-            
+            // ⚠️ PAS DE CAPTION (ne rien écrire)
           } catch (e) {
             const msg = e?.message ?? String(e);
-            doc.font("Helvetica").fontSize(10).fillColor("#ef4444").text("⚠️ Appendix image not loaded.");
+            doc.font("Helvetica").fontSize(10).fillColor("#ef4444").text("Appendix image not loaded.");
             doc.font("Helvetica").fontSize(8).fillColor("#9ca3af").text(`(${msg})`);
           }
         }
@@ -608,7 +727,6 @@ function generateOfferPDFWithLogo(offer) {
     })();
   });
 }
-
 
 
 /* ============================ ROUTES ============================ */
