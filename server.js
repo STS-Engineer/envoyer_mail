@@ -369,6 +369,17 @@ async function sendEmailWithPdf({ to, subject, messageHtml, pdfBuffer, pdfFilena
   });
 }
 
+// =================== OFFER PDF (HEADER + APPENDIX IMAGE via OpenAI file_id) ===================
+// Prérequis: npm i sharp
+// ENV: OPENAI_API_KEY
+// Dépendances attendues déjà dans ton fichier: PDFDocument, path, loadImageToBuffer, validateImageBuffer, fetchUrlToBuffer (optionnel)
+// IMPORTANT: pagination supprimée (ne rien écrire en bas)
+
+const https = require("https");
+const http = require("http");
+const { URL } = require("url");
+const sharp = require("sharp");
+
 // ====== ADRESSES ENTETE (selon site) ======
 const COMPANY_ADDRESS_MAP = {
   "avocarbon france": [
@@ -496,18 +507,69 @@ function drawOfferHeader(doc, offer, logoBuf) {
   doc.y = HEADER_TOTAL_H + 18;
 }
 
-// ================= APPENDIX IMAGE HELPERS =================
+// ================= APPENDIX IMAGE HELPERS (OpenAI file_id / download_link) =================
 
-// helper : enlève le prefix "data:image/...;base64,"
-function stripDataUrlPrefix(b64) {
-  let s = String(b64 || "").trim();
-  if (s.startsWith("data:")) {
-    const comma = s.indexOf(",");
-    s = comma >= 0 ? s.slice(comma + 1) : s;
-  }
-  // nettoyage base64 (espaces + caractères invalides)
-  s = s.replace(/[\s\n\r\t]/g, "").replace(/[^A-Za-z0-9+/=]/g, "");
-  return s;
+// Télécharge une URL en Buffer
+function fetchUrlToBufferGeneric(urlStr, timeoutMs = 20000) {
+  return new Promise((resolve, reject) => {
+    try {
+      const u = new URL(urlStr);
+      const lib = u.protocol === "https:" ? https : http;
+
+      const req = lib.request(
+        {
+          method: "GET",
+          hostname: u.hostname,
+          path: u.pathname + (u.search || ""),
+          headers: { "User-Agent": "AVOCarbon-Offer-Generator/1.0" },
+          timeout: timeoutMs,
+        },
+        (res) => {
+          const chunks = [];
+          if (res.statusCode && res.statusCode >= 400) {
+            return reject(new Error(`Download failed ${res.statusCode}`));
+          }
+          res.on("data", (c) => chunks.push(c));
+          res.on("end", () => resolve(Buffer.concat(chunks)));
+        }
+      );
+
+      req.on("timeout", () => req.destroy(new Error("Download timeout")));
+      req.on("error", reject);
+      req.end();
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
+
+// Télécharge depuis OpenAI Files API: /v1/files/{file_id}/content
+async function downloadFromOpenAIFileId(fileId) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
+
+  const url = `https://api.openai.com/v1/files/${encodeURIComponent(fileId)}/content`;
+
+  return new Promise((resolve, reject) => {
+    const req = https.request(
+      url,
+      {
+        method: "GET",
+        headers: { Authorization: `Bearer ${apiKey}` },
+      },
+      (res) => {
+        const chunks = [];
+        if (res.statusCode && res.statusCode >= 400) {
+          return reject(new Error(`OpenAI download failed ${res.statusCode}`));
+        }
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => resolve(Buffer.concat(chunks)));
+      }
+    );
+
+    req.on("error", reject);
+    req.end();
+  });
 }
 
 function detectImageTypeFromBuffer(buf) {
@@ -532,38 +594,33 @@ function detectImageTypeFromBuffer(buf) {
   return "unknown";
 }
 
-// convertit n'importe quelle image (webp/gif/heic/...) en PNG safe pour PDFKit
+// Convertit n'importe quelle image en PNG safe PDFKit
 async function toPngBufferAny(buf) {
   return sharp(buf, { failOn: "none" }).rotate().png({ compressionLevel: 9 }).toBuffer();
 }
 
-async function base64ToPngBufferSafe(imageBase64) {
-  const cleaned = stripDataUrlPrefix(imageBase64);
-  if (!cleaned) throw new Error("Base64 vide après nettoyage");
+// Résout l'image annexe: offer.appendixImageRef { id, download_link, mime_type, name }
+async function resolveOfferAppendixImagePng(offer) {
+  const ref = offer?.appendixImageRef;
 
-  const raw = Buffer.from(cleaned, "base64");
-  if (!raw || raw.length < 32) throw new Error("Base64 invalide ou tronquée");
+  if (!ref) return null;
 
-  // on force PNG pour éviter "unsupported image format" dans PDFKit
+  let raw = null;
+
+  if (ref.download_link) {
+    raw = await fetchUrlToBufferGeneric(ref.download_link);
+  } else if (ref.id) {
+    raw = await downloadFromOpenAIFileId(ref.id);
+  } else {
+    return null;
+  }
+
+  if (!raw || raw.length < 32) throw new Error("Downloaded image is empty/truncated");
+
   const t = detectImageTypeFromBuffer(raw);
   if (t === "png") return raw;
+
   return await toPngBufferAny(raw);
-}
-
-async function resolveOfferAppendixImagePng(offer) {
-  // 1) base64
-  if (offer?.appendixImageBase64) {
-    return await base64ToPngBufferSafe(offer.appendixImageBase64);
-  }
-
-  // 2) URL (si tu veux l'activer plus tard)
-  if (offer?.appendixImageUrl) {
-    const buf = await fetchUrlToBuffer(offer.appendixImageUrl);
-    if (!buf || buf.length < 32) throw new Error("Image téléchargée vide");
-    return await toPngBufferAny(buf);
-  }
-
-  return null;
 }
 
 function generateOfferPDFWithLogo(offer) {
@@ -603,11 +660,10 @@ function generateOfferPDFWithLogo(offer) {
         doc.on("pageAdded", () => drawOfferHeader(doc, offer, logoBuf));
 
         // ====== TITRE ======
-        doc
-          .font("Helvetica-Bold")
-          .fontSize(18)
-          .fillColor("#111827")
-          .text(offer?.title || "COMMERCIAL OFFER", { align: "left" });
+        doc.font("Helvetica-Bold").fontSize(18).fillColor("#111827").text(
+          offer?.title || "COMMERCIAL OFFER",
+          { align: "left" }
+        );
 
         doc.moveDown(0.4);
         doc.font("Helvetica").fontSize(10).fillColor("#374151").text(
@@ -649,11 +705,11 @@ function generateOfferPDFWithLogo(offer) {
         if (offer?.subject) {
           const y0 = doc.y;
           doc.save().fillColor("#dbeafe").rect(50, y0, doc.page.width - 100, 22).fill().restore();
-          doc
-            .font("Helvetica-Bold")
-            .fontSize(10)
-            .fillColor("#111827")
-            .text(offer.subject, 58, y0 + 6);
+          doc.font("Helvetica-Bold").fontSize(10).fillColor("#111827").text(
+            offer.subject,
+            58,
+            y0 + 6
+          );
           doc.moveDown(2);
         }
 
@@ -688,30 +744,30 @@ function generateOfferPDFWithLogo(offer) {
         if (offer?.signatureTitle) doc.text(offer.signatureTitle);
 
         // ====== IMAGE DANS LE PDF (ANNEXE À LA FIN) ======
-        // ✅ Image intégrée dans le PDF, sans caption (comme tu as demandé)
-        if (offer?.appendixImageBase64 || offer?.appendixImageUrl) {
+        // Nouveau: OpenAI file ref (id / download_link / mime_type)
+        if (offer?.appendixImageRef && (offer.appendixImageRef.download_link || offer.appendixImageRef.id)) {
           doc.addPage(); // nouvelle page (header auto)
           doc.moveDown(0.5);
 
-          doc
-            .font("Helvetica-Bold")
-            .fontSize(12)
-            .fillColor("#111827")
-            .text(offer?.appendixImageTitle || "Appendix - Drawing / Photo");
+          doc.font("Helvetica-Bold").fontSize(12).fillColor("#111827").text(
+            offer?.appendixImageTitle || "Appendix - Drawing / Photo"
+          );
           doc.moveDown(0.5);
 
           try {
             const pngBuf = await resolveOfferAppendixImagePng(offer);
             if (!pngBuf) throw new Error("Appendix image not provided");
 
-            // optionnel: validation (va afficher magic bytes)
-            validateImageBuffer(pngBuf);
+            // optionnel: si ta fonction existe déjà
+            try {
+              validateImageBuffer(pngBuf);
+            } catch (_) {}
 
             const maxW = doc.page.width - 100;
             const maxH = 420;
             doc.image(pngBuf, { fit: [maxW, maxH], align: "center" });
 
-            // ⚠️ PAS DE CAPTION (ne rien écrire)
+            // ✅ PAS DE CAPTION
           } catch (e) {
             const msg = e?.message ?? String(e);
             doc.font("Helvetica").fontSize(10).fillColor("#ef4444").text("Appendix image not loaded.");
@@ -719,7 +775,7 @@ function generateOfferPDFWithLogo(offer) {
           }
         }
 
-        // ✅ Pagination supprimée : rien en bas
+        // ✅ Pagination supprimée : ne rien écrire en bas
         doc.end();
       } catch (err) {
         reject(err);
