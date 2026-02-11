@@ -21,6 +21,10 @@ const EMAIL_FROM = "administration.STS@avocarbon.com";
 
 // Email de destination pour les tickets de support (FIXE)
 const SUPPORT_EMAIL = "chaima.benyahia@avocarbon.com";
+/* constante pour open IA */ 
+
+const OpenAI = require("openai");
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 /* ========================= MIDDLEWARES ========================= */
 app.use(express.json({ limit: "50mb" }));
