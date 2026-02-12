@@ -12,6 +12,13 @@ const sharp = require("sharp");
 const XLSX = require("xlsx");
 
 const app = express();
+const OpenAI = require("openai"); // npm i openai
+const TEMP_UPLOAD_FOLDER = path.join(process.cwd(), "temp_uploads");
+const MAX_AGE_MINUTES = 30;
+
+if (!fs.existsSync(TEMP_UPLOAD_FOLDER)) fs.mkdirSync(TEMP_UPLOAD_FOLDER, { recursive: true });
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY }); // ✅ Azure App Settings
 
 /* ========================= CONFIG FIXE ========================= */
 const SMTP_HOST = "avocarbon-com.mail.protection.outlook.com";
@@ -609,6 +616,37 @@ function generateOfferPDFWithLogo(offer) {
   });
 }
 
+function cleanupOldFiles(folder, maxAgeMinutes = 30) {
+  const cutoff = Date.now() - maxAgeMinutes * 60 * 1000;
+  try {
+    for (const file of fs.readdirSync(folder)) {
+      const full = path.join(folder, file);
+      try {
+        const st = fs.statSync(full);
+        if (st.isFile() && st.mtimeMs < cutoff) fs.unlinkSync(full);
+      } catch (_) {}
+    }
+  } catch (_) {}
+}
+
+// Nettoyage automatique toutes les 10 minutes
+setInterval(() => cleanupOldFiles(TEMP_UPLOAD_FOLDER, MAX_AGE_MINUTES), 10 * 60 * 1000);
+
+async function downloadFromOpenAIFileId(fileId) {
+  // OpenAI Files API → bytes
+  const resp = await openai.files.content(fileId);
+  const ab = await resp.arrayBuffer();
+  return Buffer.from(ab);
+}
+
+function saveBytesToTemp(fileBytes, originalName = "uploaded_file.bin") {
+  const safe = (originalName && String(originalName)) || "uploaded_file.bin";
+  const filenameSafe = safe.includes(".") ? safe : `${safe}.bin`;
+  const finalName = `${uuid.uuid4().slice(0, 8)}_${Date.now()}_${filenameSafe.replace(/[^a-z0-9._-]/gi, "_")}`;
+  const localPath = path.join(TEMP_UPLOAD_FOLDER, finalName);
+  fs.writeFileSync(localPath, fileBytes);
+  return { filename: finalName, localPath, expiresInMinutes: MAX_AGE_MINUTES };
+}
 
 
 /* ============================ ROUTES ============================ */
@@ -620,10 +658,67 @@ app.post("/api/echo", (req, res) => {
 
 
 // ========== ROUTE : GÉNÉRATION OFFRE PDF + EMAIL (avec logo) ==========
-app.post("/api/generate-offer-and-send", async (req, res) => {
-  try {
-    const { email, subject, offer, cc } = req.body || {};
+// ====== ROUTE COMPLETE: GENERATION OFFRE + EMAIL + OPENAI FILE REF -> TEMP FILE (AUTO DELETE 30 MIN) ======
 
+const OpenAI = require("openai");          // npm i openai
+const { v4: uuidv4 } = require("uuid");    // npm i uuid
+
+// Dossier temp
+const TEMP_UPLOAD_FOLDER = path.join(process.cwd(), "temp_uploads");
+const MAX_AGE_MINUTES = 30;
+
+if (!fs.existsSync(TEMP_UPLOAD_FOLDER)) {
+  fs.mkdirSync(TEMP_UPLOAD_FOLDER, { recursive: true });
+}
+
+// OpenAI client (clé dans Azure App Settings)
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+// cleanup old temp files
+function cleanupOldFiles(folder, maxAgeMinutes = 30) {
+  const cutoff = Date.now() - maxAgeMinutes * 60 * 1000;
+  try {
+    for (const file of fs.readdirSync(folder)) {
+      const full = path.join(folder, file);
+      try {
+        const st = fs.statSync(full);
+        if (st.isFile() && st.mtimeMs < cutoff) fs.unlinkSync(full);
+      } catch (_) {}
+    }
+  } catch (_) {}
+}
+
+// nettoyage périodique
+setInterval(() => cleanupOldFiles(TEMP_UPLOAD_FOLDER, MAX_AGE_MINUTES), 10 * 60 * 1000);
+
+async function downloadFromOpenAIFileId(fileId) {
+  // Files API -> bytes
+  const resp = await openai.files.content(fileId);
+  const ab = await resp.arrayBuffer();
+  return Buffer.from(ab);
+}
+
+function saveBytesToTemp(fileBytes, originalName = "appendix.png") {
+  const safeName = String(originalName || "appendix.png")
+    .replace(/[^a-z0-9._-]/gi, "_");
+
+  const finalName = `${uuidv4().slice(0, 8)}_${Date.now()}_${safeName}`;
+  const localPath = path.join(TEMP_UPLOAD_FOLDER, finalName);
+
+  fs.writeFileSync(localPath, fileBytes);
+  return { filename: finalName, localPath, expiresInMinutes: MAX_AGE_MINUTES };
+}
+
+// IMPORTANT: il faut que generateOfferPDFWithLogo supporte offer.appendixImagePath
+// (je t’ai donné le mini patch à faire dans ce bloc dans un message précédent)
+
+app.post("/api/generate-offer-and-send", async (req, res) => {
+  let tempFilePathToDeleteLater = null;
+
+  try {
+    const { email, subject, offer, cc, openaiFileIdRefs, appendixOpenAIFile } = req.body || {};
+
+    // ---- validations ----
     if (!email || !subject || !offer) {
       return res.status(400).json({
         success: false,
@@ -646,6 +741,34 @@ app.post("/api/generate-offer-and-send", async (req, res) => {
 
     offer.subject = offer.subject || subject;
 
+    // cleanup opportuniste
+    cleanupOldFiles(TEMP_UPLOAD_FOLDER, MAX_AGE_MINUTES);
+
+    // ---- 1) récupérer une ref OpenAI (priorité: appendixOpenAIFile, sinon openaiFileIdRefs[0]) ----
+    let ref = appendixOpenAIFile;
+    if (!ref && Array.isArray(openaiFileIdRefs) && openaiFileIdRefs.length > 0) {
+      ref = openaiFileIdRefs[0];
+    }
+
+    // ---- 2) si ref existe: download -> save temp -> inject into offer.appendixImagePath ----
+    if (ref) {
+      const fileId = typeof ref === "string" ? ref : ref.id;
+      const originalName = typeof ref === "string" ? "appendix.png" : (ref.name || "appendix.png");
+
+      if (!fileId) {
+        return res.status(400).json({ success: false, error: "appendixOpenAIFile missing id" });
+      }
+
+      const bytes = await downloadFromOpenAIFileId(fileId);
+      const saved = saveBytesToTemp(bytes, originalName);
+
+      offer.appendixImagePath = saved.localPath;     // <-- utilisé par generateOfferPDFWithLogo
+      offer.appendixExpiresInMinutes = saved.expiresInMinutes;
+
+      tempFilePathToDeleteLater = saved.localPath;   // (optionnel) on le supprime aussi à la fin si tu veux
+    }
+
+    // ---- 3) generate PDF + send email ----
     const pdfBuffer = await generateOfferPDFWithLogo(offer);
     const pdfName = `offre_${Date.now()}.pdf`;
 
@@ -671,13 +794,14 @@ app.post("/api/generate-offer-and-send", async (req, res) => {
       subject,
       html,
       attachments: [
-        {
-          filename: pdfName,
-          content: pdfBuffer,
-          contentType: "application/pdf",
-        },
+        { filename: pdfName, content: pdfBuffer, contentType: "application/pdf" },
       ],
     });
+
+    // (Optionnel) si tu veux supprimer l'image temp juste après l'envoi (au lieu d'attendre 30 min):
+    // if (tempFilePathToDeleteLater && fs.existsSync(tempFilePathToDeleteLater)) {
+    //   try { fs.unlinkSync(tempFilePathToDeleteLater); } catch(_) {}
+    // }
 
     return res.json({
       success: true,
@@ -687,6 +811,8 @@ app.post("/api/generate-offer-and-send", async (req, res) => {
         cc: cc || null,
         filename: pdfName,
         pdfSize: `${(pdfBuffer.length / 1024).toFixed(2)} KB`,
+        appendixTempFile: offer.appendixImagePath || null,
+        appendixExpiresInMinutes: offer.appendixExpiresInMinutes || null,
       },
     });
   } catch (err) {
@@ -698,6 +824,7 @@ app.post("/api/generate-offer-and-send", async (req, res) => {
     });
   }
 });
+
 
 // ========== ROUTE : ENVOI EMAIL SIMPLE (SANS PJ) ==========
 
