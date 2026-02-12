@@ -601,14 +601,26 @@ async function toPngBufferAny(buf) {
 // Résout l'image annexe: offer.appendixImageRef { id, download_link, mime_type, name }
 async function resolveOfferAppendixImagePng(offer) {
   const ref = offer?.appendixImageRef;
-
   if (!ref) return null;
+
+  const dl = typeof ref.download_link === "string" ? ref.download_link.trim() : "";
+
+  const isHttpUrl = (s) => {
+    try {
+      const u = new URL(String(s).trim());
+      return u.protocol === "http:" || u.protocol === "https:";
+    } catch {
+      return false;
+    }
+  };
 
   let raw = null;
 
-  if (ref.download_link) {
-    raw = await fetchUrlToBufferGeneric(ref.download_link);
+  // ✅ utiliser download_link seulement si c’est une URL http/https
+  if (dl && isHttpUrl(dl)) {
+    raw = await fetchUrlToBufferGeneric(dl);
   } else if (ref.id) {
+    // ✅ fallback sur OpenAI Files API
     raw = await downloadFromOpenAIFileId(ref.id);
   } else {
     return null;
@@ -621,6 +633,7 @@ async function resolveOfferAppendixImagePng(offer) {
 
   return await toPngBufferAny(raw);
 }
+
 
 function generateOfferPDFWithLogo(offer) {
   return new Promise((resolve, reject) => {
