@@ -497,12 +497,21 @@ function drawOfferHeader(doc, offer, logoBuf) {
 
   doc.y = HEADER_TOTAL_H + 18;
 }
+// fonction ajouter 
+function normalizeOpenAIFileId(id) {
+  const s = String(id || "").trim();
+  if (!s) return "";
+  if (s.startsWith("file_")) return "file-" + s.slice("file_".length);
+  return s;
+}
 
 // ================= APPENDIX IMAGE HELPERS (OpenAI file_id / download_link) =================
 
-function fetchUrlToBufferGeneric(urlStr, timeoutMs = 20000) {
+function fetchUrlToBufferGeneric(urlStr, timeoutMs = 20000, depth = 0) {
   return new Promise((resolve, reject) => {
     try {
+      if (depth > 5) return reject(new Error("Too many redirects"));
+
       const u = new URL(urlStr);
       const lib = u.protocol === "https:" ? https : http;
 
@@ -515,6 +524,15 @@ function fetchUrlToBufferGeneric(urlStr, timeoutMs = 20000) {
           timeout: timeoutMs,
         },
         (res) => {
+          // ✅ handle redirects
+          if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+            const nextUrl = res.headers.location.startsWith("http")
+              ? res.headers.location
+              : new URL(res.headers.location, urlStr).toString();
+            res.resume();
+            return resolve(fetchUrlToBufferGeneric(nextUrl, timeoutMs, depth + 1));
+          }
+
           const chunks = [];
           if (res.statusCode && res.statusCode >= 400) {
             res.resume();
@@ -538,15 +556,15 @@ async function downloadFromOpenAIFileId(fileId) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
 
-  const url = `https://api.openai.com/v1/files/${encodeURIComponent(fileId)}/content`;
+  const normalized = normalizeOpenAIFileId(fileId);
+  if (!normalized) throw new Error("Invalid file id");
+
+  const url = `https://api.openai.com/v1/files/${encodeURIComponent(normalized)}/content`;
 
   return new Promise((resolve, reject) => {
     const req = https.request(
       url,
-      {
-        method: "GET",
-        headers: { Authorization: `Bearer ${apiKey}` },
-      },
+      { method: "GET", headers: { Authorization: `Bearer ${apiKey}` } },
       (res) => {
         const chunks = [];
         if (res.statusCode && res.statusCode >= 400) {
@@ -557,11 +575,11 @@ async function downloadFromOpenAIFileId(fileId) {
         res.on("end", () => resolve(Buffer.concat(chunks)));
       }
     );
-
     req.on("error", reject);
     req.end();
   });
 }
+
 
 function detectImageTypeFromBuffer(buf) {
   if (!buf || buf.length < 12) return "unknown";
@@ -594,6 +612,9 @@ async function resolveOpenAIFileRefToPng(ref) {
 
   const dl = typeof ref.download_link === "string" ? ref.download_link.trim() : "";
 
+  // ✅ LOG ICI (avant le download)
+  console.log(`[Appendix] ${ref?.name || ""} id=${ref?.id} hasDL=${!!dl}`);
+
   const isHttpUrl = (s) => {
     try {
       const u = new URL(String(s).trim());
@@ -605,9 +626,11 @@ async function resolveOpenAIFileRefToPng(ref) {
 
   let raw = null;
   if (dl && isHttpUrl(dl)) {
+    console.log("[Appendix] source=download_link");
     raw = await fetchUrlToBufferGeneric(dl);
   } else {
-    raw = await downloadFromOpenAIFileId(ref.id);
+    console.log("[Appendix] source=openai_file_content");
+    raw = await downloadFromOpenAIFileId(normalizeOpenAIFileId(ref.id));
   }
 
   if (!raw || raw.length < 32) throw new Error("Downloaded image is empty/truncated");
@@ -617,6 +640,7 @@ async function resolveOpenAIFileRefToPng(ref) {
 
   return await toPngBufferAny(raw);
 }
+
 
 async function resolveOfferOpenAIFileIdRefsPng(offer) {
   const refs = Array.isArray(offer?.openaiFileIdRefs) ? offer.openaiFileIdRefs : [];
