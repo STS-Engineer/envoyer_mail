@@ -378,12 +378,7 @@ async function sendEmailWithPdf({ to, subject, messageHtml, pdfBuffer, pdfFilena
 // ENV: OPENAI_API_KEY
 // Dépendances attendues déjà dans ton fichier: PDFDocument, path, loadImageToBuffer, validateImageBuffer, fetchUrlToBuffer (optionnel)
 // IMPORTANT: pagination supprimée (ne rien écrire en bas)
-
-const https = require("https");
-const http = require("http");
 const { URL } = require("url");
-const sharp = require("sharp");
-
 // ====== ADRESSES ENTETE (selon site) ======
 const COMPANY_ADDRESS_MAP = {
   "avocarbon france": [
