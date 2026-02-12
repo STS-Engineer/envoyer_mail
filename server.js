@@ -10,6 +10,7 @@ const fs = require("fs");
 const path = require("path");
 const sharp = require("sharp");
 const XLSX = require("xlsx");
+const { URL } = require("url");
 
 const app = express();
 
@@ -21,10 +22,6 @@ const EMAIL_FROM = "administration.STS@avocarbon.com";
 
 // Email de destination pour les tickets de support (FIXE)
 const SUPPORT_EMAIL = "chaima.benyahia@avocarbon.com";
-/* constante pour open IA */ 
-
-const OpenAI = require("openai");
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 /* ========================= MIDDLEWARES ========================= */
 app.use(express.json({ limit: "50mb" }));
@@ -354,10 +351,7 @@ function generatePDF(content) {
         doc.end();
       }
     } catch (err) {
-      console.error(
-        "Erreur génération PDF:",
-        err && err.stack ? err.stack : String(err)
-      );
+      console.error("Erreur génération PDF:", err && err.stack ? err.stack : String(err));
       reject(err);
     }
   });
@@ -373,12 +367,12 @@ async function sendEmailWithPdf({ to, subject, messageHtml, pdfBuffer, pdfFilena
   });
 }
 
-// =================== OFFER PDF (HEADER + APPENDIX IMAGE via OpenAI file_id) ===================
-// Prérequis: npm i sharp
-// ENV: OPENAI_API_KEY
-// Dépendances attendues déjà dans ton fichier: PDFDocument, path, loadImageToBuffer, validateImageBuffer, fetchUrlToBuffer (optionnel)
-// IMPORTANT: pagination supprimée (ne rien écrire en bas)
-const { URL } = require("url");
+/* ======================================================================
+   OFFER PDF (HEADER + APPENDIX via openaiFileIdRefs[])
+   - offer.openaiFileIdRefs: [{ id, name?, mime_type?, download_link? }, ...]
+   - IMPORTANT: pagination supprimée (ne rien écrire en bas) pour l’OFFRE
+   ====================================================================== */
+
 // ====== ADRESSES ENTETE (selon site) ======
 const COMPANY_ADDRESS_MAP = {
   "avocarbon france": [
@@ -465,10 +459,9 @@ function getCompanyAddressLines(offer) {
 function drawOfferHeader(doc, offer, logoBuf) {
   const pageW = doc.page.width;
 
-  // ✅ plus d’espace en haut (réglable)
-  const TOP_BAR_H = 16; // barre bleue en haut
-  const HEADER_BLOCK_H = 90; // zone adresse + logo
-  const BOTTOM_BAR_H = 10; // barre bleue sous header
+  const TOP_BAR_H = 16;
+  const HEADER_BLOCK_H = 90;
+  const BOTTOM_BAR_H = 10;
   const HEADER_TOTAL_H = TOP_BAR_H + HEADER_BLOCK_H + BOTTOM_BAR_H;
 
   // Barre bleue haut
@@ -476,7 +469,7 @@ function drawOfferHeader(doc, offer, logoBuf) {
   doc.fillColor("#0b5fa5").rect(0, 0, pageW, TOP_BAR_H).fill();
   doc.restore();
 
-  // Adresse (gauche)
+  // Adresse
   const addrLines = getCompanyAddressLines(offer) || [];
   const addrX = 50;
   const addrY = TOP_BAR_H + 12;
@@ -489,7 +482,7 @@ function drawOfferHeader(doc, offer, logoBuf) {
     });
   }
 
-  // Logo (droite)
+  // Logo
   if (logoBuf) {
     const logoW = 140;
     const x = pageW - 50 - logoW;
@@ -502,13 +495,11 @@ function drawOfferHeader(doc, offer, logoBuf) {
   doc.fillColor("#0b5fa5").rect(0, TOP_BAR_H + HEADER_BLOCK_H, pageW, BOTTOM_BAR_H).fill();
   doc.restore();
 
-  // Curseur sous entête + espace
   doc.y = HEADER_TOTAL_H + 18;
 }
 
 // ================= APPENDIX IMAGE HELPERS (OpenAI file_id / download_link) =================
 
-// Télécharge une URL en Buffer
 function fetchUrlToBufferGeneric(urlStr, timeoutMs = 20000) {
   return new Promise((resolve, reject) => {
     try {
@@ -526,6 +517,7 @@ function fetchUrlToBufferGeneric(urlStr, timeoutMs = 20000) {
         (res) => {
           const chunks = [];
           if (res.statusCode && res.statusCode >= 400) {
+            res.resume();
             return reject(new Error(`Download failed ${res.statusCode}`));
           }
           res.on("data", (c) => chunks.push(c));
@@ -542,7 +534,6 @@ function fetchUrlToBufferGeneric(urlStr, timeoutMs = 20000) {
   });
 }
 
-// Télécharge depuis OpenAI Files API: /v1/files/{file_id}/content
 async function downloadFromOpenAIFileId(fileId) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
@@ -559,6 +550,7 @@ async function downloadFromOpenAIFileId(fileId) {
       (res) => {
         const chunks = [];
         if (res.statusCode && res.statusCode >= 400) {
+          res.resume();
           return reject(new Error(`OpenAI download failed ${res.statusCode}`));
         }
         res.on("data", (c) => chunks.push(c));
@@ -593,15 +585,12 @@ function detectImageTypeFromBuffer(buf) {
   return "unknown";
 }
 
-// Convertit n'importe quelle image en PNG safe PDFKit
 async function toPngBufferAny(buf) {
   return sharp(buf, { failOn: "none" }).rotate().png({ compressionLevel: 9 }).toBuffer();
 }
 
-// Résout l'image annexe: offer.appendixImageRef { id, download_link, mime_type, name }
-async function resolveOfferAppendixImagePng(offer) {
-  const ref = offer?.appendixImageRef;
-  if (!ref) return null;
+async function resolveOpenAIFileRefToPng(ref) {
+  if (!ref || !ref.id) throw new Error("Invalid ref: missing id");
 
   const dl = typeof ref.download_link === "string" ? ref.download_link.trim() : "";
 
@@ -615,15 +604,10 @@ async function resolveOfferAppendixImagePng(offer) {
   };
 
   let raw = null;
-
-  // ✅ utiliser download_link seulement si c’est une URL http/https
   if (dl && isHttpUrl(dl)) {
     raw = await fetchUrlToBufferGeneric(dl);
-  } else if (ref.id) {
-    // ✅ fallback sur OpenAI Files API
-    raw = await downloadFromOpenAIFileId(ref.id);
   } else {
-    return null;
+    raw = await downloadFromOpenAIFileId(ref.id);
   }
 
   if (!raw || raw.length < 32) throw new Error("Downloaded image is empty/truncated");
@@ -634,6 +618,36 @@ async function resolveOfferAppendixImagePng(offer) {
   return await toPngBufferAny(raw);
 }
 
+async function resolveOfferOpenAIFileIdRefsPng(offer) {
+  const refs = Array.isArray(offer?.openaiFileIdRefs) ? offer.openaiFileIdRefs : [];
+  if (refs.length === 0) return [];
+
+  const out = [];
+  for (let i = 0; i < refs.length; i++) {
+    const ref = refs[i];
+    try {
+      const pngBuf = await resolveOpenAIFileRefToPng(ref);
+      try {
+        validateImageBuffer(pngBuf);
+      } catch (_) {}
+
+      out.push({
+        pngBuf,
+        name: ref?.name || `image_${i + 1}`,
+        mime_type: ref?.mime_type || "image/*",
+        id: ref?.id,
+      });
+    } catch (e) {
+      out.push({
+        error: e?.message ?? String(e),
+        name: ref?.name || `image_${i + 1}`,
+        mime_type: ref?.mime_type || "image/*",
+        id: ref?.id,
+      });
+    }
+  }
+  return out;
+}
 
 function generateOfferPDFWithLogo(offer) {
   return new Promise((resolve, reject) => {
@@ -672,22 +686,27 @@ function generateOfferPDFWithLogo(offer) {
         doc.on("pageAdded", () => drawOfferHeader(doc, offer, logoBuf));
 
         // ====== TITRE ======
-        doc.font("Helvetica-Bold").fontSize(18).fillColor("#111827").text(
-          offer?.title || "COMMERCIAL OFFER",
-          { align: "left" }
-        );
+        doc
+          .font("Helvetica-Bold")
+          .fontSize(18)
+          .fillColor("#111827")
+          .text(offer?.title || "COMMERCIAL OFFER", { align: "left" });
 
         doc.moveDown(0.4);
-        doc.font("Helvetica").fontSize(10).fillColor("#374151").text(
-          `Date: ${
-            offer?.date ||
-            new Date().toLocaleDateString("fr-FR", {
-              year: "numeric",
-              month: "long",
-              day: "numeric",
-            })
-          }`
-        );
+        doc
+          .font("Helvetica")
+          .fontSize(10)
+          .fillColor("#374151")
+          .text(
+            `Date: ${
+              offer?.date ||
+              new Date().toLocaleDateString("fr-FR", {
+                year: "numeric",
+                month: "long",
+                day: "numeric",
+              })
+            }`
+          );
 
         doc.moveDown(1);
 
@@ -717,11 +736,11 @@ function generateOfferPDFWithLogo(offer) {
         if (offer?.subject) {
           const y0 = doc.y;
           doc.save().fillColor("#dbeafe").rect(50, y0, doc.page.width - 100, 22).fill().restore();
-          doc.font("Helvetica-Bold").fontSize(10).fillColor("#111827").text(
-            offer.subject,
-            58,
-            y0 + 6
-          );
+          doc
+            .font("Helvetica-Bold")
+            .fontSize(10)
+            .fillColor("#111827")
+            .text(offer.subject, 58, y0 + 6);
           doc.moveDown(2);
         }
 
@@ -755,39 +774,62 @@ function generateOfferPDFWithLogo(offer) {
         if (offer?.signatureName) doc.text(offer.signatureName);
         if (offer?.signatureTitle) doc.text(offer.signatureTitle);
 
-        // ====== IMAGE DANS LE PDF (ANNEXE À LA FIN) ======
-        // Nouveau: OpenAI file ref (id / download_link / mime_type)
-        if (offer?.appendixImageRef && (offer.appendixImageRef.download_link || offer.appendixImageRef.id)) {
-          doc.addPage(); // nouvelle page (header auto)
+        // ====== APPENDIX (IMAGES FROM openaiFileIdRefs[]) ======
+        const appendixRefs = Array.isArray(offer?.openaiFileIdRefs) ? offer.openaiFileIdRefs : [];
+        if (appendixRefs.length > 0) {
+          const items = await resolveOfferOpenAIFileIdRefsPng(offer);
+
+          doc.addPage(); // header auto
           doc.moveDown(0.5);
 
-          doc.font("Helvetica-Bold").fontSize(12).fillColor("#111827").text(
-            offer?.appendixImageTitle || "Appendix - Drawing / Photo"
-          );
-          doc.moveDown(0.5);
+          doc
+            .font("Helvetica-Bold")
+            .fontSize(12)
+            .fillColor("#111827")
+            .text("Appendix - Drawings / Photos");
+          doc.moveDown(0.6);
 
-          try {
-            const pngBuf = await resolveOfferAppendixImagePng(offer);
-            if (!pngBuf) throw new Error("Appendix image not provided");
+          const maxW = doc.page.width - 100;
+          const maxH = 420;
 
-            // optionnel: si ta fonction existe déjà
+          for (let i = 0; i < items.length; i++) {
+            const it = items[i];
+
+            if (doc.y > doc.page.height - (maxH + 140)) {
+              doc.addPage();
+              doc.moveDown(0.5);
+              doc
+                .font("Helvetica-Bold")
+                .fontSize(12)
+                .fillColor("#111827")
+                .text("Appendix - Drawings / Photos");
+              doc.moveDown(0.6);
+            }
+
+            const label = `${i + 1}) ${it.name || "image"}${it.id ? " — " + it.id : ""}`;
+            doc.font("Helvetica-Bold").fontSize(9).fillColor("#374151").text(label);
+            doc.moveDown(0.3);
+
+            if (it.error) {
+              doc.font("Helvetica").fontSize(10).fillColor("#ef4444").text("Image not loaded.");
+              doc.font("Helvetica").fontSize(8).fillColor("#9ca3af").text(`(${it.error})`);
+              doc.moveDown(1);
+              continue;
+            }
+
             try {
-              validateImageBuffer(pngBuf);
-            } catch (_) {}
-
-            const maxW = doc.page.width - 100;
-            const maxH = 420;
-            doc.image(pngBuf, { fit: [maxW, maxH], align: "center" });
-
-            // ✅ PAS DE CAPTION
-          } catch (e) {
-            const msg = e?.message ?? String(e);
-            doc.font("Helvetica").fontSize(10).fillColor("#ef4444").text("Appendix image not loaded.");
-            doc.font("Helvetica").fontSize(8).fillColor("#9ca3af").text(`(${msg})`);
+              doc.image(it.pngBuf, { fit: [maxW, maxH], align: "center" });
+              doc.moveDown(1);
+            } catch (e) {
+              const msg = e?.message ?? String(e);
+              doc.font("Helvetica").fontSize(10).fillColor("#ef4444").text("Image insert failed.");
+              doc.font("Helvetica").fontSize(8).fillColor("#9ca3af").text(`(${msg})`);
+              doc.moveDown(1);
+            }
           }
         }
 
-        // ✅ Pagination supprimée : ne rien écrire en bas
+        // ✅ Pagination supprimée pour l’OFFRE : ne rien écrire en bas
         doc.end();
       } catch (err) {
         reject(err);
@@ -796,14 +838,12 @@ function generateOfferPDFWithLogo(offer) {
   });
 }
 
-
 /* ============================ ROUTES ============================ */
 
 // Debug simple
 app.post("/api/echo", (req, res) => {
   res.json({ ok: true, got: req.body || {} });
 });
-
 
 // ========== ROUTE : GÉNÉRATION OFFRE PDF + EMAIL (avec logo) ==========
 app.post("/api/generate-offer-and-send", async (req, res) => {
@@ -886,12 +926,10 @@ app.post("/api/generate-offer-and-send", async (req, res) => {
 });
 
 // ========== ROUTE : ENVOI EMAIL SIMPLE (SANS PJ) ==========
-
 app.post("/api/send-email", async (req, res) => {
   try {
     const { email, subject, message, messageHtml, cc } = req.body || {};
 
-    // ---------- VALIDATION ----------
     if (!email || !subject || (!message && !messageHtml)) {
       return res.status(400).json({
         success: false,
@@ -901,10 +939,7 @@ app.post("/api/send-email", async (req, res) => {
     }
 
     if (!isValidEmail(email)) {
-      return res.status(400).json({
-        success: false,
-        error: "Email invalide",
-      });
+      return res.status(400).json({ success: false, error: "Email invalide" });
     }
 
     if (cc && !isValidEmail(cc)) {
@@ -915,7 +950,6 @@ app.post("/api/send-email", async (req, res) => {
       });
     }
 
-    // ---------- HTML BODY ----------
     const html =
       messageHtml ||
       `<!DOCTYPE html>
@@ -931,7 +965,6 @@ app.post("/api/send-email", async (req, res) => {
   </body>
 </html>`;
 
-    // ---------- SEND EMAIL ----------
     await transporter.sendMail({
       from: { name: EMAIL_FROM_NAME, address: EMAIL_FROM },
       to: email,
@@ -941,11 +974,8 @@ app.post("/api/send-email", async (req, res) => {
       text: message ? String(message) : undefined,
     });
 
-    console.log(
-      `✅ Email simple envoyé à ${email}${cc ? " (CC: " + cc + ")" : ""}`
-    );
+    console.log(`✅ Email simple envoyé à ${email}${cc ? " (CC: " + cc + ")" : ""}`);
 
-    // ---------- SUCCESS RESPONSE ----------
     return res.json({
       success: true,
       message: "Email envoyé avec succès",
@@ -957,7 +987,6 @@ app.post("/api/send-email", async (req, res) => {
       },
     });
   } catch (err) {
-    // ---------- ERROR LOGGING ----------
     console.error("❌ Erreur envoi email simple (SMTP):", {
       message: err?.message,
       code: err?.code,
@@ -967,7 +996,6 @@ app.post("/api/send-email", async (req, res) => {
       stack: err?.stack,
     });
 
-    // ---------- ERROR RESPONSE ----------
     return res.status(500).json({
       success: false,
       error: "Erreur lors de l'envoi de l'email",
@@ -982,14 +1010,11 @@ app.post("/api/send-email", async (req, res) => {
   }
 });
 
-
-
 // ========== ROUTE : ENVOI EMAIL SUPPORT ==========
 app.post("/api/support/send-email", async (req, res) => {
   try {
     const { username, comment, assistant_name } = req.body || {};
 
-    // Validation
     if (!username || !comment || !assistant_name) {
       return res.status(400).json({
         success: false,
@@ -1011,112 +1036,36 @@ app.post("/api/support/send-email", async (req, res) => {
       <html>
         <head>
           <style>
-            body {
-              font-family: Arial, sans-serif;
-              line-height: 1.6;
-              color: #111827;
-              max-width: 600px;
-              margin: 0 auto;
-              padding: 20px;
-            }
-            .header {
-              background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-              color: black;
-              padding: 20px;
-              border-radius: 8px 8px 0 0;
-              text-align: center;
-              position: relative;
-              overflow: hidden;
-            }
-            .header h1 {
-              color: #ff0000;
-              margin: 0;
-              font-size: 48px;
-              font-weight: 900;
-              letter-spacing: 8px;
-              position: relative;
-              text-shadow:
-                0 0 10px rgba(255, 0, 0, 0.8),
-                0 0 20px rgba(255, 0, 0, 0.6),
-                0 0 30px rgba(255, 0, 0, 0.4),
-                2px 2px 4px rgba(0, 0, 0, 0.3);
-            }
-            .content {
-              background: #f9fafb;
-              padding: 20px;
-              border: 1px solid #e5e7eb;
-              border-top: none;
-            }
-            .info-box {
-              background: white;
-              border-left: 4px solid #667eea;
-              padding: 15px;
-              margin: 15px 0;
-              border-radius: 4px;
-            }
-            .info-box strong {
-              color: #667eea;
-              display: inline-block;
-              width: 150px;
-            }
-            .comment-box {
-              background: white;
-              border: 2px solid #fbbf24;
-              padding: 15px;
-              margin: 15px 0;
-              border-radius: 4px;
-            }
-            .comment-box h3 {
-              margin-top: 0;
-              color: #f59e0b;
-            }
-            .footer {
-              text-align: center;
-              margin-top: 20px;
-              padding: 15px;
-              background: #f3f4f6;
-              border-radius: 0 0 8px 8px;
-              font-size: 12px;
-              color: #6b7280;
-            }
-            .priority {
-              display: inline-block;
-              background: #ef4444;
-              color: white;
-              padding: 5px 10px;
-              border-radius: 4px;
-              font-size: 12px;
-              font-weight: bold;
-            }
+            body { font-family: Arial, sans-serif; line-height: 1.6; color: #111827; max-width: 600px; margin: 0 auto; padding: 20px; }
+            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: black; padding: 20px; border-radius: 8px 8px 0 0; text-align: center; position: relative; overflow: hidden; }
+            .header h1 { color: #ff0000; margin: 0; font-size: 48px; font-weight: 900; letter-spacing: 8px; position: relative; text-shadow: 0 0 10px rgba(255, 0, 0, 0.8), 0 0 20px rgba(255, 0, 0, 0.6), 0 0 30px rgba(255, 0, 0, 0.4), 2px 2px 4px rgba(0, 0, 0, 0.3); }
+            .content { background: #f9fafb; padding: 20px; border: 1px solid #e5e7eb; border-top: none; }
+            .info-box { background: white; border-left: 4px solid #667eea; padding: 15px; margin: 15px 0; border-radius: 4px; }
+            .info-box strong { color: #667eea; display: inline-block; width: 150px; }
+            .comment-box { background: white; border: 2px solid #fbbf24; padding: 15px; margin: 15px 0; border-radius: 4px; }
+            .comment-box h3 { margin-top: 0; color: #f59e0b; }
+            .footer { text-align: center; margin-top: 20px; padding: 15px; background: #f3f4f6; border-radius: 0 0 8px 8px; font-size: 12px; color: #6b7280; }
+            .priority { display: inline-block; background: #ef4444; color: white; padding: 5px 10px; border-radius: 4px; font-size: 12px; font-weight: bold; }
           </style>
         </head>
         <body>
-          <div class="header">
-            <h1>🆘</h1>
-          </div>
-
+          <div class="header"><h1>🆘</h1></div>
           <div class="content">
-            <div style="text-align: center; margin-bottom: 20px;">
-              <span class="priority">NOUVEAU TICKET</span>
-            </div>
-
+            <div style="text-align: center; margin-bottom: 20px;"><span class="priority">NOUVEAU TICKET</span></div>
             <div class="info-box">
               <strong>👤 Utilisateur :</strong> ${escapeHtml(username)}<br>
               <strong>🤖 Assistant :</strong> ${escapeHtml(assistant_name)}<br>
               <strong>📅 Date :</strong> ${escapeHtml(timestamp)}
             </div>
-
             <div class="comment-box">
               <h3>💬 Commentaire / Problème :</h3>
               <p style="white-space: pre-wrap; margin: 0;">${escapeHtml(comment)}</p>
             </div>
-
             <div style="background: #e0e7ff; padding: 12px; border-radius: 4px; margin-top: 15px;">
               <strong>ℹ️ Action requise :</strong><br>
               Veuillez traiter cette demande de support dans les plus brefs délais.
             </div>
           </div>
-
           <div class="footer">
             <p>
               Email envoyé automatiquement par le système de support<br>
@@ -1144,10 +1093,7 @@ app.post("/api/support/send-email", async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
-    console.error(
-      "❌ Erreur envoi email support:",
-      err && err.stack ? err.stack : String(err)
-    );
+    console.error("❌ Erreur envoi email support:", err && err.stack ? err.stack : String(err));
     return res.status(500).json({
       success: false,
       error: "Erreur lors de l'envoi de l'email",
@@ -1160,9 +1106,7 @@ app.post("/api/support/send-email", async (req, res) => {
 app.post("/api/generate-excel-and-send", async (req, res) => {
   try {
     const { email, subject, sheets, filename, cc } = req.body || {};
-    //                       ↑↑↑ ajout de cc ici
 
-    // Validation des données requises
     if (!email || !subject || !sheets) {
       return res.status(400).json({
         success: false,
@@ -1172,13 +1116,9 @@ app.post("/api/generate-excel-and-send", async (req, res) => {
     }
 
     if (!isValidEmail(email)) {
-      return res.status(400).json({
-        success: false,
-        error: "Email invalide",
-      });
+      return res.status(400).json({ success: false, error: "Email invalide" });
     }
 
-    // cc est optionnel, mais si présent on le valide aussi
     if (cc && !isValidEmail(cc)) {
       return res.status(400).json({
         success: false,
@@ -1187,17 +1127,11 @@ app.post("/api/generate-excel-and-send", async (req, res) => {
       });
     }
 
-    // Création du workbook
     const workbook = XLSX.utils.book_new();
 
-    // Gestion des formats de "sheets"
     if (Array.isArray(sheets)) {
-      // Format: [{ name, data }]
       if (sheets.length === 0) {
-        return res.status(400).json({
-          success: false,
-          error: "Le tableau sheets est vide",
-        });
+        return res.status(400).json({ success: false, error: "Le tableau sheets est vide" });
       }
 
       sheets.forEach((sheet, index) => {
@@ -1212,14 +1146,10 @@ app.post("/api/generate-excel-and-send", async (req, res) => {
         XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
       });
     } else if (typeof sheets === "object" && sheets !== null) {
-      // Format: { "NomSheet": [ [..], .. ] }
       const sheetNames = Object.keys(sheets);
 
       if (sheetNames.length === 0) {
-        return res.status(400).json({
-          success: false,
-          error: "L'objet sheets est vide",
-        });
+        return res.status(400).json({ success: false, error: "L'objet sheets est vide" });
       }
 
       sheetNames.forEach((sheetName) => {
@@ -1240,23 +1170,19 @@ app.post("/api/generate-excel-and-send", async (req, res) => {
       });
     }
 
-    // Génération du buffer Excel
     const excelBuffer = XLSX.write(workbook, {
       type: "buffer",
       bookType: "xlsx",
       compression: true,
     });
 
-    // Nom du fichier
     const excelFilename = filename
       ? `${String(filename).replace(/[^a-z0-9]/gi, "_")}.xlsx`
       : `rapport_${Date.now()}.xlsx`;
 
     const sheetCount = workbook.SheetNames.length;
     const sheetsList = workbook.SheetNames
-      .map(
-        (name, i) => `<li><strong>Sheet ${i + 1}:</strong> ${escapeHtml(name)}</li>`
-      )
+      .map((name, i) => `<li><strong>Sheet ${i + 1}:</strong> ${escapeHtml(name)}</li>`)
       .join("");
 
     const emailHtml = `
@@ -1307,22 +1233,19 @@ app.post("/api/generate-excel-and-send", async (req, res) => {
     await transporter.sendMail({
       from: { name: EMAIL_FROM_NAME, address: EMAIL_FROM },
       to: email,
-      cc: cc || undefined, // ← ajout du CC ici (optionnel)
+      cc: cc || undefined,
       subject,
       html: emailHtml,
       attachments: [
         {
           filename: excelFilename,
           content: excelBuffer,
-          contentType:
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         },
       ],
     });
 
-    console.log(
-      `✅ Excel envoyé à ${email}${cc ? " (CC: " + cc + ")" : ""} - ${excelFilename}`
-    );
+    console.log(`✅ Excel envoyé à ${email}${cc ? " (CC: " + cc + ")" : ""} - ${excelFilename}`);
 
     return res.json({
       success: true,
@@ -1337,10 +1260,7 @@ app.post("/api/generate-excel-and-send", async (req, res) => {
       },
     });
   } catch (err) {
-    console.error(
-      "❌ Erreur génération/envoi Excel:",
-      err && err.stack ? err.stack : String(err)
-    );
+    console.error("❌ Erreur génération/envoi Excel:", err && err.stack ? err.stack : String(err));
     return res.status(500).json({
       success: false,
       error: "Erreur lors du traitement",
@@ -1370,10 +1290,7 @@ app.post("/api/generate-and-send", async (req, res) => {
       !Array.isArray(reportContent.sections) ||
       !reportContent.conclusion
     ) {
-      return res.status(400).json({
-        success: false,
-        error: "Structure du rapport invalide",
-      });
+      return res.status(400).json({ success: false, error: "Structure du rapport invalide" });
     }
 
     const pdfBuffer = await generatePDF(reportContent);
@@ -1460,13 +1377,9 @@ app.post("/api/test-image", async (req, res) => {
       imageType: type,
       size: `${(buffer.length / 1024).toFixed(2)} KB`,
       sizeBytes: buffer.length,
-      magicBytes: `${buffer[0]
+      magicBytes: `${buffer[0].toString(16).padStart(2, "0")} ${buffer[1]
         .toString(16)
-        .padStart(2, "0")} ${buffer[1]
-        .toString(16)
-        .padStart(2, "0")} ${buffer[2]
-        .toString(16)
-        .padStart(2, "0")} ${buffer[3]
+        .padStart(2, "0")} ${buffer[2].toString(16).padStart(2, "0")} ${buffer[3]
         .toString(16)
         .padStart(2, "0")}`,
       normalizedPreviewPossible: normalizedOk,
@@ -1500,22 +1413,16 @@ app.get("/", (_req, res) => {
       generateExcelAndSend: "POST /api/generate-excel-and-send",
       sendSupportEmail: "POST /api/support/send-email",
       static: "GET /static/<fichier>",
+      generateOfferAndSend: "POST /api/generate-offer-and-send",
     },
   });
 });
 
 /* ========================= 404 & ERREUR ======================== */
-app.use((req, res) =>
-  res.status(404).json({ error: "Route non trouvée", path: req.path })
-);
+app.use((req, res) => res.status(404).json({ error: "Route non trouvée", path: req.path }));
 app.use((err, _req, res, _next) => {
-  console.error(
-    "Erreur middleware:",
-    err && err.stack ? err.stack : String(err)
-  );
-  res
-    .status(500)
-    .json({ error: "Erreur serveur", message: (err && err.message) ?? String(err) });
+  console.error("Erreur middleware:", err && err.stack ? err.stack : String(err));
+  res.status(500).json({ error: "Erreur serveur", message: (err && err.message) ?? String(err) });
 });
 
 /* ============================ START ============================ */
