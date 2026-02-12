@@ -386,18 +386,8 @@ const COMPANY_ADDRESS_MAP = {
     "Phone : +33 5 49 62 25 00",
   ],
 
-  "avocarbon germany": [
-    "AVOCarbon Germany",
-    "AVOCarbon Germany GmbH",
-    "Talstrasse 112",
-    "D-60437 Frankfurt am Main",
-  ],
-  germany: [
-    "AVOCarbon Germany",
-    "AVOCarbon Germany GmbH",
-    "Talstrasse 112",
-    "D-60437 Frankfurt am Main",
-  ],
+  "avocarbon germany": ["AVOCarbon Germany", "AVOCarbon Germany GmbH", "Talstrasse 112", "D-60437 Frankfurt am Main"],
+  germany: ["AVOCarbon Germany", "AVOCarbon Germany GmbH", "Talstrasse 112", "D-60437 Frankfurt am Main"],
 
   "avocarbon india": [
     "AVOCarbon India",
@@ -412,27 +402,11 @@ const COMPANY_ADDRESS_MAP = {
     "Tamilnadu",
   ],
 
-  "avocarbon korea": [
-    "AVOCarbon Korea",
-    "306, Nongong-ro, Nongong-eup",
-    "Dalseong-Gun, Daegu",
-  ],
+  "avocarbon korea": ["AVOCarbon Korea", "306, Nongong-ro, Nongong-eup", "Dalseong-Gun, Daegu"],
   korea: ["AVOCarbon Korea", "306, Nongong-ro, Nongong-eup", "Dalseong-Gun, Daegu"],
 
-  "assymex monterrey": [
-    "ASSYMEX MONTERREY",
-    "San Sebastian 110",
-    "Co. Los Lermas",
-    "GUADALUPE, N.L",
-    "Mexico 67190",
-  ],
-  monterrey: [
-    "ASSYMEX MONTERREY",
-    "San Sebastian 110",
-    "Co. Los Lermas",
-    "GUADALUPE, N.L",
-    "Mexico 67190",
-  ],
+  "assymex monterrey": ["ASSYMEX MONTERREY", "San Sebastian 110", "Co. Los Lermas", "GUADALUPE, N.L", "Mexico 67190"],
+  monterrey: ["ASSYMEX MONTERREY", "San Sebastian 110", "Co. Los Lermas", "GUADALUPE, N.L", "Mexico 67190"],
 
   tunisia: ["AVOCarbon", "Tunisia", "SCEET & SAME", "Zone industrielle Elfahs", "1140 Zaghouane"],
   tunis: ["AVOCarbon", "Tunisia", "SCEET & SAME", "Zone industrielle Elfahs", "1140 Zaghouane"],
@@ -451,7 +425,6 @@ function getCompanyAddressLines(offer) {
     normalizeKey(offer?.site) ||
     normalizeKey(offer?.entity) ||
     "france";
-
   return COMPANY_ADDRESS_MAP[key] || COMPANY_ADDRESS_MAP.france;
 }
 
@@ -497,7 +470,10 @@ function drawOfferHeader(doc, offer, logoBuf) {
 
   doc.y = HEADER_TOTAL_H + 18;
 }
-// fonction ajouter 
+
+/* ================= APPENDIX IMAGE HELPERS (OpenAI file_id / download_link) ================= */
+
+// Accepte file-xxx OU file_xxx
 function normalizeOpenAIFileId(id) {
   const s = String(id || "").trim();
   if (!s) return "";
@@ -505,12 +481,17 @@ function normalizeOpenAIFileId(id) {
   return s;
 }
 
-// ================= APPENDIX IMAGE HELPERS (OpenAI file_id / download_link) =================
+function looksLikeHtml(buf) {
+  if (!buf || buf.length < 20) return false;
+  const head = buf.slice(0, 200).toString("utf8").toLowerCase();
+  return head.includes("<!doctype html") || head.includes("<html") || head.includes("access denied");
+}
 
-function fetchUrlToBufferGeneric(urlStr, timeoutMs = 20000, depth = 0) {
+// URL downloader (redirects + timeouts)
+function fetchUrlToBufferGeneric(urlStr, timeoutMs = 25000, depth = 0) {
   return new Promise((resolve, reject) => {
     try {
-      if (depth > 5) return reject(new Error("Too many redirects"));
+      if (depth > 8) return reject(new Error("Too many redirects"));
 
       const u = new URL(urlStr);
       const lib = u.protocol === "https:" ? https : http;
@@ -520,11 +501,14 @@ function fetchUrlToBufferGeneric(urlStr, timeoutMs = 20000, depth = 0) {
           method: "GET",
           hostname: u.hostname,
           path: u.pathname + (u.search || ""),
-          headers: { "User-Agent": "AVOCarbon-Offer-Generator/1.0" },
+          headers: {
+            "User-Agent": "AVOCarbon-Offer-Generator/1.0",
+            Accept: "*/*",
+          },
           timeout: timeoutMs,
         },
         (res) => {
-          // ✅ handle redirects
+          // redirects
           if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
             const nextUrl = res.headers.location.startsWith("http")
               ? res.headers.location
@@ -533,11 +517,13 @@ function fetchUrlToBufferGeneric(urlStr, timeoutMs = 20000, depth = 0) {
             return resolve(fetchUrlToBufferGeneric(nextUrl, timeoutMs, depth + 1));
           }
 
-          const chunks = [];
-          if (res.statusCode && res.statusCode >= 400) {
+          if (res.statusCode !== 200) {
+            const code = res.statusCode;
             res.resume();
-            return reject(new Error(`Download failed ${res.statusCode}`));
+            return reject(new Error(`Download failed HTTP ${code}`));
           }
+
+          const chunks = [];
           res.on("data", (c) => chunks.push(c));
           res.on("end", () => resolve(Buffer.concat(chunks)));
         }
@@ -552,6 +538,7 @@ function fetchUrlToBufferGeneric(urlStr, timeoutMs = 20000, depth = 0) {
   });
 }
 
+// Téléchargement via OpenAI Files API
 async function downloadFromOpenAIFileId(fileId) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
@@ -564,12 +551,19 @@ async function downloadFromOpenAIFileId(fileId) {
   return new Promise((resolve, reject) => {
     const req = https.request(
       url,
-      { method: "GET", headers: { Authorization: `Bearer ${apiKey}` } },
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          Accept: "*/*",
+        },
+      },
       (res) => {
         const chunks = [];
-        if (res.statusCode && res.statusCode >= 400) {
+        if (res.statusCode !== 200) {
+          const code = res.statusCode;
           res.resume();
-          return reject(new Error(`OpenAI download failed ${res.statusCode}`));
+          return reject(new Error(`OpenAI file download failed HTTP ${code}`));
         }
         res.on("data", (c) => chunks.push(c));
         res.on("end", () => resolve(Buffer.concat(chunks)));
@@ -580,68 +574,62 @@ async function downloadFromOpenAIFileId(fileId) {
   });
 }
 
-
-function detectImageTypeFromBuffer(buf) {
-  if (!buf || buf.length < 12) return "unknown";
-  const isPNG = buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47;
-  const isJPG = buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
-  const isGIF = buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46;
-  const isWEBP =
-    buf[0] === 0x52 &&
-    buf[1] === 0x49 &&
-    buf[2] === 0x46 &&
-    buf[3] === 0x46 &&
-    buf[8] === 0x57 &&
-    buf[9] === 0x45 &&
-    buf[10] === 0x42 &&
-    buf[11] === 0x50;
-
-  if (isPNG) return "png";
-  if (isJPG) return "jpeg";
-  if (isGIF) return "gif";
-  if (isWEBP) return "webp";
-  return "unknown";
-}
-
+// 🔥 robust: on convertit TOUJOURS en PNG pour PDFKit
 async function toPngBufferAny(buf) {
-  return sharp(buf, { failOn: "none" }).rotate().png({ compressionLevel: 9 }).toBuffer();
+  return sharp(buf, { failOn: "none" })
+    .rotate()
+    .png({ compressionLevel: 9 })
+    .toBuffer();
 }
 
+function isHttpUrl(s) {
+  try {
+    const u = new URL(String(s).trim());
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+// Résout un ref (download_link > openai file content) => retourne png buffer
 async function resolveOpenAIFileRefToPng(ref) {
   if (!ref || !ref.id) throw new Error("Invalid ref: missing id");
 
   const dl = typeof ref.download_link === "string" ? ref.download_link.trim() : "";
 
-  // ✅ LOG ICI (avant le download)
-  console.log(`[Appendix] ${ref?.name || ""} id=${ref?.id} hasDL=${!!dl}`);
+  console.log(
+    `[Appendix] ref name="${ref?.name || ""}" id="${ref?.id}" hasDownloadLink=${!!dl}`
+  );
 
-  const isHttpUrl = (s) => {
-    try {
-      const u = new URL(String(s).trim());
-      return u.protocol === "http:" || u.protocol === "https:";
-    } catch {
-      return false;
-    }
-  };
-
-  let raw = null;
+  let raw;
   if (dl && isHttpUrl(dl)) {
     console.log("[Appendix] source=download_link");
     raw = await fetchUrlToBufferGeneric(dl);
   } else {
-    console.log("[Appendix] source=openai_file_content");
-    raw = await downloadFromOpenAIFileId(normalizeOpenAIFileId(ref.id));
+    console.log("[Appendix] source=openai_files_api");
+    raw = await downloadFromOpenAIFileId(ref.id);
   }
 
-  if (!raw || raw.length < 32) throw new Error("Downloaded image is empty/truncated");
+  if (!raw || raw.length < 64) {
+    throw new Error(`Downloaded image is empty/truncated (${raw ? raw.length : 0} bytes)`);
+  }
 
-  const t = detectImageTypeFromBuffer(raw);
-  if (t === "png") return raw;
+  if (looksLikeHtml(raw)) {
+    const head = raw.slice(0, 200).toString("utf8");
+    throw new Error(
+      "Downloaded content is HTML (not an image). Head=" +
+        head.replace(/\s+/g, " ").slice(0, 180)
+    );
+  }
 
-  return await toPngBufferAny(raw);
+  // ✅ convertit toujours en PNG pour éviter "Unknown image format" PDFKit
+  const png = await toPngBufferAny(raw);
+
+  if (!png || png.length < 64) throw new Error("PNG conversion failed / empty output");
+  return png;
 }
 
-
+// Traite offer.openaiFileIdRefs => tableau d’items (pngBuf ou erreur)
 async function resolveOfferOpenAIFileIdRefsPng(offer) {
   const refs = Array.isArray(offer?.openaiFileIdRefs) ? offer.openaiFileIdRefs : [];
   if (refs.length === 0) return [];
@@ -658,7 +646,7 @@ async function resolveOfferOpenAIFileIdRefsPng(offer) {
       out.push({
         pngBuf,
         name: ref?.name || `image_${i + 1}`,
-        mime_type: ref?.mime_type || "image/*",
+        mime_type: "image/png",
         id: ref?.id,
       });
     } catch (e) {
