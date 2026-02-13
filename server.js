@@ -15,6 +15,7 @@ const { v4: uuidv4 } = require("uuid"); // npm i uuid
 
 const app = express();
 const { URL } = require("url");
+
 /* ========================= CONFIG FIXE ========================= */
 const SMTP_HOST = "avocarbon-com.mail.protection.outlook.com";
 const SMTP_PORT = 25;
@@ -236,7 +237,6 @@ async function downloadBytesFromOpenAIRef(nref) {
   return Buffer.from(ab);
 }
 
-
 function pickAppendixRef(openaiFileIdRefs, appendixOpenAIFile) {
   const prefer = normalizeOpenAIFileRef(appendixOpenAIFile);
   if (prefer) return prefer;
@@ -246,7 +246,9 @@ function pickAppendixRef(openaiFileIdRefs, appendixOpenAIFile) {
 
   // choose first image by name ext if possible
   const img = normalized.find((r) => isAllowedImageName(r.name));
-  return img || normalized[0] || null;
+
+  // ✅ IMPORTANT: évite de choisir un PDF/Excel comme annexe
+  return img || null;
 }
 
 /* ============================ PDF (REPORT) ============================ */
@@ -415,7 +417,7 @@ const COMPANY_ADDRESS_MAP = {
   korea: ["AVOCarbon Korea", "306, Nongong-ro, Nongong-eup", "Dalseong-Gun, Daegu"],
 
   "assymex monterrey": ["ASSYMEX MONTERREY", "San Sebastian 110", "Co. Los Lermas", "GUADALUPE, N.L", "Mexico 67190"],
-  monterrey: ["ASSYMEX MONTERREY", "San Sebastian 110", "Co. Los Lermas", "GUADALUPE, N.L", "Mexico 67190"],
+  monterrey: ["ASSYMEX MONTERREY", "San Sebastian 110", "Co. Los Lermas", "GUADOLUPE, N.L", "Mexico 67190"],
 
   tunisia: ["AVOCarbon", "Tunisia", "SCEET & SAME", "Zone industrielle Elfahs", "1140 Zaghouane"],
   tunis: ["AVOCarbon", "Tunisia", "SCEET & SAME", "Zone industrielle Elfahs", "1140 Zaghouane"],
@@ -665,14 +667,14 @@ app.post("/api/generate-offer-and-send", async (req, res) => {
       try {
         const bytes = await downloadBytesFromOpenAIRef(r);
         const saved = saveBytesToTemp(bytes, r.name || "uploaded_file.bin");
-        savedFiles.push({
-           id: r.id || null,
-           download_link: r.download_link || null,
-           name: r.name || saved.filename,
-           localPath: saved.localPath,
-           expiresInMinutes: saved.expiresInMinutes,
-        });
 
+        // ✅ FIX: ici le push était correct, c'était le `});` en trop qui cassait tout
+        savedFiles.push({
+          id: r.id || null,
+          download_link: r.download_link || null,
+          name: r.name || saved.filename,
+          localPath: saved.localPath,
+          expiresInMinutes: saved.expiresInMinutes,
         });
       } catch (e) {
         errors.push({
@@ -689,13 +691,11 @@ app.post("/api/generate-offer-and-send", async (req, res) => {
     if (appendixRef) {
       // ensure it exists in savedFiles, else download+save (when appendixOpenAIFile is not in refs)
       const already = savedFiles.find((f) => {
-          if (!f.localPath) return false;
-          if (appendixRef.id && f.id && f.id === appendixRef.id) return true;
-                 // match by download_link
-          if (appendixRef.download_link && f.download_link && f.download_link === appendixRef.download_link) return true;
-         // fallback match by name
-          if (appendixRef.name && f.name && f.name === appendixRef.name) return true;
-          return false;
+        if (!f.localPath) return false;
+        if (appendixRef.id && f.id && f.id === appendixRef.id) return true;
+        if (appendixRef.download_link && f.download_link && f.download_link === appendixRef.download_link) return true;
+        if (appendixRef.name && f.name && f.name === appendixRef.name) return true;
+        return false;
       });
 
       if (already) {
@@ -703,10 +703,11 @@ app.post("/api/generate-offer-and-send", async (req, res) => {
         offer.appendixExpiresInMinutes = already.expiresInMinutes;
       } else {
         try {
-          // validate name ext if image
           const appendixName = appendixRef.name || "appendix.png";
           if (!isAllowedImageName(appendixName)) {
-            throw new Error(`Annexe: extension non autorisée (${getExtLower(appendixName) || "no-ext"})`);
+            throw new Error(
+              `Annexe: extension non autorisée (${getExtLower(appendixName) || "no-ext"})`
+            );
           }
 
           const bytes = await downloadBytesFromOpenAIRef(appendixRef);
@@ -716,14 +717,11 @@ app.post("/api/generate-offer-and-send", async (req, res) => {
           try {
             const buf = await loadImageToBuffer({ imagePath: saved.localPath });
             validateImageBuffer(buf);
-          } catch (_) {
-            // leave it; PDF generator will attempt sharp normalize and may still work
-          }
+          } catch (_) {}
 
           offer.appendixImagePath = saved.localPath;
           offer.appendixExpiresInMinutes = saved.expiresInMinutes;
 
-          // also push to savedFiles if not present
           savedFiles.push({
             id: appendixRef.id || null,
             name: appendixName,
@@ -1227,7 +1225,9 @@ app.listen(PORT, "0.0.0.0", () => {
 });
 
 /* ========================= PROCESS HOOKS ======================= */
-process.on("unhandledRejection", (r) => console.error("Unhandled Rejection:", r && r.stack ? r.stack : String(r)));
+process.on("unhandledRejection", (r) =>
+  console.error("Unhandled Rejection:", r && r.stack ? r.stack : String(r))
+);
 process.on("uncaughtException", (e) => {
   console.error("Uncaught Exception:", e && e.stack ? e.stack : String(e));
   process.exit(1);
