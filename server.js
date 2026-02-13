@@ -666,12 +666,13 @@ app.post("/api/generate-offer-and-send", async (req, res) => {
         const bytes = await downloadBytesFromOpenAIRef(r);
         const saved = saveBytesToTemp(bytes, r.name || "uploaded_file.bin");
         savedFiles.push({
-          id: r.id || null,
-          download_link: r.download_link || null,
-          name: r.name || saved.filename,
-          localPath: saved.localPath,
-            expiresInMinutes: saved.expiresInMinutes,
-          });
+           id: r.id || null,
+           download_link: r.download_link || null,
+           name: r.name || saved.filename,
+           localPath: saved.localPath,
+           expiresInMinutes: saved.expiresInMinutes,
+        });
+
         });
       } catch (e) {
         errors.push({
