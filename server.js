@@ -10,24 +10,26 @@ const fs = require("fs");
 const path = require("path");
 const sharp = require("sharp");
 const XLSX = require("xlsx");
+const OpenAI = require("openai"); // npm i openai
+const { v4: uuidv4 } = require("uuid"); // npm i uuid
 
 const app = express();
-const OpenAI = require("openai"); // npm i openai
-const TEMP_UPLOAD_FOLDER = path.join(process.cwd(), "temp_uploads");
-const MAX_AGE_MINUTES = 30;
-
-if (!fs.existsSync(TEMP_UPLOAD_FOLDER)) fs.mkdirSync(TEMP_UPLOAD_FOLDER, { recursive: true });
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY }); // ✅ Azure App Settings
 
 /* ========================= CONFIG FIXE ========================= */
 const SMTP_HOST = "avocarbon-com.mail.protection.outlook.com";
 const SMTP_PORT = 25;
 const EMAIL_FROM_NAME = "Administration STS";
 const EMAIL_FROM = "administration.STS@avocarbon.com";
-
-// Email de destination pour les tickets de support (FIXE)
 const SUPPORT_EMAIL = "chaima.benyahia@avocarbon.com";
+
+const TEMP_UPLOAD_FOLDER = path.join(process.cwd(), "temp_uploads");
+const MAX_AGE_MINUTES = 30;
+
+if (!fs.existsSync(TEMP_UPLOAD_FOLDER)) {
+  fs.mkdirSync(TEMP_UPLOAD_FOLDER, { recursive: true });
+}
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY }); // Azure App Settings
 
 /* ========================= MIDDLEWARES ========================= */
 app.use(express.json({ limit: "50mb" }));
@@ -83,22 +85,11 @@ function escapeHtml(str) {
     .replace(/'/g, "&#039;");
 }
 
-function cleanAndValidateBase64(imageData) {
-  if (imageData == null) throw new Error("imageData vide");
-  let base64Data = String(imageData);
-  if (base64Data.startsWith("data:image")) {
-    const idx = base64Data.indexOf(",");
-    base64Data = idx >= 0 ? base64Data.slice(idx + 1) : base64Data;
-  }
-  base64Data = base64Data.replace(/[\s\n\r\t]/g, "").replace(/[^A-Za-z0-9+/=]/g, "");
-  if (!base64Data) throw new Error("imageData après nettoyage est vide");
-  return base64Data;
-}
-
 function fetchUrlToBuffer(url) {
   return new Promise((resolve, reject) => {
     const client = url.startsWith("https") ? https : http;
     const req = client.get(url, (res) => {
+      // redirects
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         const nextUrl = res.headers.location.startsWith("http")
           ? res.headers.location
@@ -115,39 +106,29 @@ function fetchUrlToBuffer(url) {
       res.on("end", () => resolve(Buffer.concat(chunks)));
     });
     req.on("error", reject);
-    req.setTimeout(15000, () => req.destroy(new Error("Timeout téléchargement image")));
+    req.setTimeout(15000, () => req.destroy(new Error("Timeout téléchargement")));
   });
 }
 
-async function loadImageToBuffer({ imageUrl, imagePath, imageBase64 }) {
-  if (imageUrl) {
-    return await fetchUrlToBuffer(imageUrl);
-  }
+async function loadImageToBuffer({ imageUrl, imagePath }) {
+  if (imageUrl) return await fetchUrlToBuffer(imageUrl);
+
   if (imagePath) {
     const full = path.resolve(imagePath);
     if (!fs.existsSync(full)) {
-      throw new Error(
-        `Fichier image introuvable: ${full} (cwd=${process.cwd()}). Vérifie le déploiement et/ou utilise imageUrl.`
-      );
+      throw new Error(`Fichier image introuvable: ${full} (cwd=${process.cwd()})`);
     }
     return fs.promises.readFile(full);
   }
-  if (imageBase64) {
-    const cleaned = cleanAndValidateBase64(imageBase64);
-    return Buffer.from(cleaned, "base64");
-  }
-  throw new Error("Aucune source d'image fournie (imageUrl | imagePath | image base64).");
+
+  throw new Error("Aucune source d'image fournie (imageUrl | imagePath).");
 }
 
 function validateImageBuffer(buffer) {
-  if (!buffer || !Buffer.isBuffer(buffer)) {
-    throw new Error("Image non Buffer");
-  }
-  if (buffer.length < 10) {
-    throw new Error(`Image trop petite (${buffer.length} octets)`);
-  }
-  const isPNG =
-    buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47;
+  if (!buffer || !Buffer.isBuffer(buffer)) throw new Error("Image non Buffer");
+  if (buffer.length < 10) throw new Error(`Image trop petite (${buffer.length} octets)`);
+
+  const isPNG = buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47;
   const isJPEG = buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
   const isGIF = buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46;
 
@@ -160,20 +141,105 @@ function validateImageBuffer(buffer) {
   );
 
   if (!isPNG && !isJPEG && !isGIF) {
-    console.warn("⚠️ Format non reconnu — tentative avec PDFKit tout de même.");
+    console.warn("⚠️ Format non reconnu — tentative avec sharp/PDFKit tout de même.");
   }
   return true;
 }
 
 async function normalizeImageBuffer(buffer, { format = "png" } = {}) {
   const img = sharp(buffer, { failOn: "none" }).rotate();
-  if (format === "png") {
-    return await img.png({ compressionLevel: 9 }).toBuffer();
-  } else {
-    return await img.jpeg({ quality: 90, chromaSubsampling: "4:4:4" }).toBuffer();
-  }
+  if (format === "png") return await img.png({ compressionLevel: 9 }).toBuffer();
+  return await img.jpeg({ quality: 90, chromaSubsampling: "4:4:4" }).toBuffer();
 }
 
+/* ===================== TEMP FILES: SAVE + CLEANUP ===================== */
+function cleanupOldFiles(folder, maxAgeMinutes = 30) {
+  const cutoff = Date.now() - maxAgeMinutes * 60 * 1000;
+  try {
+    for (const file of fs.readdirSync(folder)) {
+      const full = path.join(folder, file);
+      try {
+        const st = fs.statSync(full);
+        if (st.isFile() && st.mtimeMs < cutoff) fs.unlinkSync(full);
+      } catch (_) {}
+    }
+  } catch (_) {}
+}
+
+// Nettoyage automatique toutes les 10 minutes
+setInterval(() => cleanupOldFiles(TEMP_UPLOAD_FOLDER, MAX_AGE_MINUTES), 10 * 60 * 1000);
+
+function sanitizeFilename(name) {
+  const raw = String(name || "uploaded_file").trim();
+  const base = raw.replace(/[/\\?%*:|"<>]/g, "_").replace(/\s+/g, "_");
+  return base.replace(/[^a-z0-9._-]/gi, "_") || "uploaded_file";
+}
+
+function getExtLower(filename) {
+  return path.extname(String(filename || "")).toLowerCase();
+}
+
+const ALLOWED_IMAGE_EXT = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
+
+function isAllowedImageName(filename) {
+  const ext = getExtLower(filename);
+  return ALLOWED_IMAGE_EXT.has(ext);
+}
+
+function saveBytesToTemp(fileBytes, originalName = "uploaded_file.bin") {
+  const safe = sanitizeFilename(originalName);
+  const finalName = `${uuidv4().slice(0, 8)}_${Date.now()}_${safe}`;
+  const localPath = path.join(TEMP_UPLOAD_FOLDER, finalName);
+  fs.writeFileSync(localPath, fileBytes);
+  return { filename: finalName, localPath, expiresInMinutes: MAX_AGE_MINUTES };
+}
+
+/* ===================== OPENAI FILE REFS HANDLING ===================== */
+function normalizeOpenAIFileRef(ref) {
+  if (!ref) return null;
+
+  if (typeof ref === "string") {
+    return { id: ref, name: "uploaded_file.bin", download_link: null };
+  }
+
+  const id = ref.id || ref.file_id || ref.fileId;
+  const download_link = ref.download_link || ref.downloadUrl || ref.url || null;
+  const name = ref.name || ref.filename || ref.original_name || "uploaded_file.bin";
+
+  if (!id && !download_link) return null;
+
+  return { id, name, download_link };
+}
+
+async function downloadBytesFromOpenAIRef(nref) {
+  if (!nref) throw new Error("Ref OpenAI vide");
+
+  // priority: download_link
+  if (nref.download_link) {
+    return await fetchUrlToBuffer(nref.download_link);
+  }
+
+  if (!nref.id) throw new Error("Ref OpenAI sans id et sans download_link");
+
+  // OpenAI Files API -> bytes
+  const resp = await openai.files.content(nref.id);
+  const ab = await resp.arrayBuffer();
+  return Buffer.from(ab);
+}
+
+function pickAppendixRef(openaiFileIdRefs, appendixOpenAIFile) {
+  const prefer = normalizeOpenAIFileRef(appendixOpenAIFile);
+  if (prefer) return prefer;
+
+  const refs = Array.isArray(openaiFileIdRefs) ? openaiFileIdRefs : [];
+  const normalized = refs.map(normalizeOpenAIFileRef).filter(Boolean);
+
+  // choose first image by name ext if possible
+  const img = normalized.find((r) => isAllowedImageName(r.name));
+  return img || normalized[0] || null;
+}
+
+/* ============================ PDF (REPORT) ============================ */
 function generatePDF(content) {
   return new Promise((resolve, reject) => {
     try {
@@ -189,18 +255,9 @@ function generatePDF(content) {
       doc.on("end", () => resolve(Buffer.concat(chunks)));
       doc.on("error", reject);
 
-      doc
-        .fontSize(26)
-        .font("Helvetica-Bold")
-        .fillColor("#1e40af")
-        .text(content.title, { align: "center" });
+      doc.fontSize(26).font("Helvetica-Bold").fillColor("#1e40af").text(content.title, { align: "center" });
       doc.moveDown(0.5);
-      doc
-        .strokeColor("#3b82f6")
-        .lineWidth(2)
-        .moveTo(50, doc.y)
-        .lineTo(doc.page.width - 50, doc.y)
-        .stroke();
+      doc.strokeColor("#3b82f6").lineWidth(2).moveTo(50, doc.y).lineTo(doc.page.width - 50, doc.y).stroke();
       doc.moveDown();
 
       doc
@@ -220,11 +277,7 @@ function generatePDF(content) {
       if (content.introduction) {
         doc.fontSize(16).font("Helvetica-Bold").fillColor("#1f2937").text("Introduction");
         doc.moveDown(0.5);
-        doc
-          .fontSize(11)
-          .font("Helvetica")
-          .fillColor("#374151")
-          .text(content.introduction, { align: "justify", lineGap: 3 });
+        doc.fontSize(11).font("Helvetica").fillColor("#374151").text(content.introduction, { align: "justify", lineGap: 3 });
         doc.moveDown(2);
       }
 
@@ -233,43 +286,27 @@ function generatePDF(content) {
           for (let index = 0; index < content.sections.length; index++) {
             const section = content.sections[index];
 
-            if (doc.y > doc.page.height - 150) {
-              doc.addPage();
-            }
+            if (doc.y > doc.page.height - 150) doc.addPage();
 
-            doc
-              .fontSize(14)
-              .font("Helvetica-Bold")
-              .fillColor("#1e40af")
-              .text(`${index + 1}. ${section.title || "Section"}`);
+            doc.fontSize(14).font("Helvetica-Bold").fillColor("#1e40af").text(`${index + 1}. ${section.title || "Section"}`);
             doc.moveDown(0.5);
 
             if (section.content) {
-              doc
-                .fontSize(11)
-                .font("Helvetica")
-                .fillColor("#374151")
-                .text(section.content, { align: "justify", lineGap: 3 });
+              doc.fontSize(11).font("Helvetica").fillColor("#374151").text(section.content, { align: "justify", lineGap: 3 });
               doc.moveDown(1);
             }
 
-            if (section.imageUrl || section.imagePath || section.image) {
+            // keep imageUrl/imagePath for the report generator only (not base64)
+            if (section.imageUrl || section.imagePath) {
               try {
                 console.log("=== Insertion image ===");
-                const buf = await loadImageToBuffer({
-                  imageUrl: section.imageUrl,
-                  imagePath: section.imagePath,
-                  imageBase64: section.image,
-                });
-
+                const buf = await loadImageToBuffer({ imageUrl: section.imageUrl, imagePath: section.imagePath });
                 validateImageBuffer(buf);
 
                 const maxWidth = doc.page.width - 100;
                 const maxHeight = 300;
 
-                if (doc.y > doc.page.height - maxHeight - 100) {
-                  doc.addPage();
-                }
+                if (doc.y > doc.page.height - maxHeight - 100) doc.addPage();
 
                 try {
                   doc.image(buf, { fit: [maxWidth, maxHeight], align: "center" });
@@ -277,40 +314,22 @@ function generatePDF(content) {
                   const m1 = String((err1 && (err1.message || err1.reason)) ?? err1);
                   console.warn("Image insert error:", m1);
 
-                  try {
-                    doc.image(buf, { width: maxWidth, align: "center" });
-                  } catch (err2) {
-                    const m2 = String((err2 && (err2.message || err2.reason)) ?? err2);
-                    console.warn("Image insert retry (width) error:", m2);
-
-                    console.log("🧼 Normalisation image via sharp (PNG)...");
-                    const normalized = await normalizeImageBuffer(buf, { format: "png" });
-                    validateImageBuffer(normalized);
-                    doc.image(normalized, { fit: [maxWidth, maxHeight], align: "center" });
-                  }
+                  console.log("🧼 Normalisation image via sharp (PNG)...");
+                  const normalized = await normalizeImageBuffer(buf, { format: "png" });
+                  validateImageBuffer(normalized);
+                  doc.image(normalized, { fit: [maxWidth, maxHeight], align: "center" });
                 }
 
                 doc.moveDown(1);
                 if (section.imageCaption) {
-                  doc
-                    .fontSize(9)
-                    .fillColor("#6b7280")
-                    .font("Helvetica-Oblique")
-                    .text(section.imageCaption, { align: "center" });
+                  doc.fontSize(9).fillColor("#6b7280").font("Helvetica-Oblique").text(section.imageCaption, { align: "center" });
                   doc.moveDown(1);
                 }
               } catch (imgError) {
-                const msg =
-                  (imgError && (imgError.message || imgError.reason)) ?? String(imgError);
+                const msg = (imgError && (imgError.message || imgError.reason)) ?? String(imgError);
                 console.error("❌ Erreur image:", msg);
-                doc
-                  .fontSize(10)
-                  .fillColor("#ef4444")
-                  .text("⚠️ Erreur lors du chargement de l'image", { align: "center" });
-                doc
-                  .fontSize(8)
-                  .fillColor("#9ca3af")
-                  .text(`(${msg})`, { align: "center" });
+                doc.fontSize(10).fillColor("#ef4444").text("⚠️ Erreur lors du chargement de l'image", { align: "center" });
+                doc.fontSize(8).fillColor("#9ca3af").text(`(${msg})`, { align: "center" });
                 doc.moveDown(1);
               }
             }
@@ -319,20 +338,10 @@ function generatePDF(content) {
           }
 
           if (content.conclusion) {
-            if (doc.y > doc.page.height - 150) {
-              doc.addPage();
-            }
-            doc
-              .fontSize(16)
-              .font("Helvetica-Bold")
-              .fillColor("#1f2937")
-              .text("Conclusion");
+            if (doc.y > doc.page.height - 150) doc.addPage();
+            doc.fontSize(16).font("Helvetica-Bold").fillColor("#1f2937").text("Conclusion");
             doc.moveDown(0.5);
-            doc
-              .fontSize(11)
-              .font("Helvetica")
-              .fillColor("#374151")
-              .text(content.conclusion, { align: "justify", lineGap: 3 });
+            doc.fontSize(11).font("Helvetica").fillColor("#374151").text(content.conclusion, { align: "justify", lineGap: 3 });
           }
 
           const range = doc.bufferedPageRange();
@@ -357,10 +366,7 @@ function generatePDF(content) {
         doc.end();
       }
     } catch (err) {
-      console.error(
-        "Erreur génération PDF:",
-        err && err.stack ? err.stack : String(err)
-      );
+      console.error("Erreur génération PDF:", err && err.stack ? err.stack : String(err));
       reject(err);
     }
   });
@@ -376,7 +382,7 @@ async function sendEmailWithPdf({ to, subject, messageHtml, pdfBuffer, pdfFilena
   });
 }
 
-// ====== ADRESSES ENTETE (selon site) ======
+/* ============================ OFFER PDF (LOGO + HEADER) ============================ */
 const COMPANY_ADDRESS_MAP = {
   "avocarbon france": [
     "AVOCarbon France - 9 rue des imprimeurs - Z.I. de la République n° 1 - 86000 POITIERS France",
@@ -421,22 +427,18 @@ function getCompanyAddressLines(offer) {
   return COMPANY_ADDRESS_MAP[key] || COMPANY_ADDRESS_MAP.france;
 }
 
-// ====== ENTETE COMMUNE (toutes les pages) ======
 function drawOfferHeader(doc, offer, logoBuf) {
   const pageW = doc.page.width;
 
-  // ✅ plus d’espace en haut (réglable)
-  const TOP_BAR_H = 16;       // barre bleue en haut
-  const HEADER_BLOCK_H = 90;  // zone adresse + logo
-  const BOTTOM_BAR_H = 10;    // barre bleue sous header
+  const TOP_BAR_H = 16;
+  const HEADER_BLOCK_H = 90;
+  const BOTTOM_BAR_H = 10;
   const HEADER_TOTAL_H = TOP_BAR_H + HEADER_BLOCK_H + BOTTOM_BAR_H;
 
-  // Barre bleue haut
   doc.save();
   doc.fillColor("#0b5fa5").rect(0, 0, pageW, TOP_BAR_H).fill();
   doc.restore();
 
-  // Adresse (gauche)
   const addrLines = getCompanyAddressLines(offer) || [];
   const addrX = 50;
   const addrY = TOP_BAR_H + 12;
@@ -449,7 +451,6 @@ function drawOfferHeader(doc, offer, logoBuf) {
     });
   }
 
-  // Logo (droite)
   if (logoBuf) {
     const logoW = 140;
     const x = pageW - 50 - logoW;
@@ -457,20 +458,11 @@ function drawOfferHeader(doc, offer, logoBuf) {
     doc.image(logoBuf, x, y, { width: logoW });
   }
 
-  // Barre bleue sous entête
   doc.save();
   doc.fillColor("#0b5fa5").rect(0, TOP_BAR_H + HEADER_BLOCK_H, pageW, BOTTOM_BAR_H).fill();
   doc.restore();
 
-  // Curseur sous entête + espace
   doc.y = HEADER_TOTAL_H + 18;
-}
-
-// helper : convertit data:image/...;base64,XXXX en base64 brut
-function stripDataUrlPrefix(b64) {
-  const s = String(b64 || "");
-  const idx = s.indexOf(",");
-  return s.startsWith("data:image") && idx >= 0 ? s.slice(idx + 1) : s;
 }
 
 function generateOfferPDFWithLogo(offer) {
@@ -510,10 +502,7 @@ function generateOfferPDFWithLogo(offer) {
         doc.on("pageAdded", () => drawOfferHeader(doc, offer, logoBuf));
 
         // ====== TITRE ======
-        doc.font("Helvetica-Bold").fontSize(18).fillColor("#111827").text(
-          offer?.title || "COMMERCIAL OFFER",
-          { align: "left" }
-        );
+        doc.font("Helvetica-Bold").fontSize(18).fillColor("#111827").text(offer?.title || "COMMERCIAL OFFER", { align: "left" });
 
         doc.moveDown(0.4);
         doc.font("Helvetica").fontSize(10).fillColor("#374151").text(
@@ -543,7 +532,7 @@ function generateOfferPDFWithLogo(offer) {
           doc.moveDown(1);
         }
 
-        // ====== SUBJECT (bande bleue claire) ======
+        // ====== SUBJECT ======
         if (offer?.subject) {
           const y0 = doc.y;
           doc.save().fillColor("#dbeafe").rect(50, y0, doc.page.width - 100, 22).fill().restore();
@@ -575,31 +564,27 @@ function generateOfferPDFWithLogo(offer) {
         if (offer?.signatureName) doc.text(offer.signatureName);
         if (offer?.signatureTitle) doc.text(offer.signatureTitle);
 
-        // ====== IMAGE DANS LE PDF (ANNEXE À LA FIN) ======
-        // ✅ Tu envoies offer.appendixImageBase64 dans le JSON
-        if (offer?.appendixImageBase64) {
-          doc.addPage(); // nouvelle page (avec header auto)
+        // ====== APPENDIX IMAGE (PATH ONLY - NO BASE64) ======
+        if (offer?.appendixImagePath || offer?.appendixImageUrl) {
+          doc.addPage();
           doc.moveDown(0.5);
 
-          doc.font("Helvetica-Bold").fontSize(12).fillColor("#111827").text(
-            offer?.appendixImageTitle || "Appendix - Drawing / Photo"
-          );
+          doc.font("Helvetica-Bold").fontSize(12).fillColor("#111827").text(offer?.appendixImageTitle || "Appendix - Drawing / Photo");
           doc.moveDown(0.5);
 
           try {
-            const cleaned = stripDataUrlPrefix(offer.appendixImageBase64);
-            const imgBuf = Buffer.from(cleaned, "base64");
+            const imgBuf = await loadImageToBuffer({
+              imagePath: offer.appendixImagePath,
+              imageUrl: offer.appendixImageUrl,
+            });
 
             validateImageBuffer(imgBuf);
 
-            // normalisation -> évite les problèmes PDFKit
             const normalized = await normalizeImageBuffer(imgBuf, { format: "png" });
 
             const maxW = doc.page.width - 100;
             const maxH = 420;
             doc.image(normalized, { fit: [maxW, maxH], align: "center" });
-
-            
           } catch (e) {
             const msg = e?.message ?? String(e);
             doc.font("Helvetica").fontSize(10).fillColor("#ef4444").text("⚠️ Appendix image not loaded.");
@@ -607,7 +592,6 @@ function generateOfferPDFWithLogo(offer) {
           }
         }
 
-        // ✅ Pagination supprimée : rien en bas
         doc.end();
       } catch (err) {
         reject(err);
@@ -616,105 +600,21 @@ function generateOfferPDFWithLogo(offer) {
   });
 }
 
-function cleanupOldFiles(folder, maxAgeMinutes = 30) {
-  const cutoff = Date.now() - maxAgeMinutes * 60 * 1000;
-  try {
-    for (const file of fs.readdirSync(folder)) {
-      const full = path.join(folder, file);
-      try {
-        const st = fs.statSync(full);
-        if (st.isFile() && st.mtimeMs < cutoff) fs.unlinkSync(full);
-      } catch (_) {}
-    }
-  } catch (_) {}
-}
-
-// Nettoyage automatique toutes les 10 minutes
-setInterval(() => cleanupOldFiles(TEMP_UPLOAD_FOLDER, MAX_AGE_MINUTES), 10 * 60 * 1000);
-
-async function downloadFromOpenAIFileId(fileId) {
-  // OpenAI Files API → bytes
-  const resp = await openai.files.content(fileId);
-  const ab = await resp.arrayBuffer();
-  return Buffer.from(ab);
-}
-
-function saveBytesToTemp(fileBytes, originalName = "uploaded_file.bin") {
-  const safe = (originalName && String(originalName)) || "uploaded_file.bin";
-  const filenameSafe = safe.includes(".") ? safe : `${safe}.bin`;
-  const finalName = `${uuid.uuid4().slice(0, 8)}_${Date.now()}_${filenameSafe.replace(/[^a-z0-9._-]/gi, "_")}`;
-  const localPath = path.join(TEMP_UPLOAD_FOLDER, finalName);
-  fs.writeFileSync(localPath, fileBytes);
-  return { filename: finalName, localPath, expiresInMinutes: MAX_AGE_MINUTES };
-}
-
-
 /* ============================ ROUTES ============================ */
-
 // Debug simple
 app.post("/api/echo", (req, res) => {
   res.json({ ok: true, got: req.body || {} });
 });
 
-
-// ========== ROUTE : GÉNÉRATION OFFRE PDF + EMAIL (avec logo) ==========
-// ====== ROUTE COMPLETE: GENERATION OFFRE + EMAIL + OPENAI FILE REF -> TEMP FILE (AUTO DELETE 30 MIN) ======
-
-const OpenAI = require("openai");          // npm i openai
-const { v4: uuidv4 } = require("uuid");    // npm i uuid
-
-// Dossier temp
-const TEMP_UPLOAD_FOLDER = path.join(process.cwd(), "temp_uploads");
-const MAX_AGE_MINUTES = 30;
-
-if (!fs.existsSync(TEMP_UPLOAD_FOLDER)) {
-  fs.mkdirSync(TEMP_UPLOAD_FOLDER, { recursive: true });
-}
-
-// OpenAI client (clé dans Azure App Settings)
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-// cleanup old temp files
-function cleanupOldFiles(folder, maxAgeMinutes = 30) {
-  const cutoff = Date.now() - maxAgeMinutes * 60 * 1000;
-  try {
-    for (const file of fs.readdirSync(folder)) {
-      const full = path.join(folder, file);
-      try {
-        const st = fs.statSync(full);
-        if (st.isFile() && st.mtimeMs < cutoff) fs.unlinkSync(full);
-      } catch (_) {}
-    }
-  } catch (_) {}
-}
-
-// nettoyage périodique
-setInterval(() => cleanupOldFiles(TEMP_UPLOAD_FOLDER, MAX_AGE_MINUTES), 10 * 60 * 1000);
-
-async function downloadFromOpenAIFileId(fileId) {
-  // Files API -> bytes
-  const resp = await openai.files.content(fileId);
-  const ab = await resp.arrayBuffer();
-  return Buffer.from(ab);
-}
-
-function saveBytesToTemp(fileBytes, originalName = "appendix.png") {
-  const safeName = String(originalName || "appendix.png")
-    .replace(/[^a-z0-9._-]/gi, "_");
-
-  const finalName = `${uuidv4().slice(0, 8)}_${Date.now()}_${safeName}`;
-  const localPath = path.join(TEMP_UPLOAD_FOLDER, finalName);
-
-  fs.writeFileSync(localPath, fileBytes);
-  return { filename: finalName, localPath, expiresInMinutes: MAX_AGE_MINUTES };
-}
-
-// IMPORTANT: il faut que generateOfferPDFWithLogo supporte offer.appendixImagePath
-// (je t’ai donné le mini patch à faire dans ce bloc dans un message précédent)
-
+/**
+ * ROUTE COMPLETE:
+ * - reçoit offer + openaiFileIdRefs (+ option appendixOpenAIFile)
+ * - download bytes -> save temp (30 min) pour tous les fichiers
+ * - pick 1 image pour annexe -> offer.appendixImagePath
+ * - generate PDF + send email
+ * - renvoie savedFiles + errors
+ */
 app.post("/api/generate-offer-and-send", async (req, res) => {
-  let tempFilePathToDeleteLater = null;
-
   try {
     const { email, subject, offer, cc, openaiFileIdRefs, appendixOpenAIFile } = req.body || {};
 
@@ -744,31 +644,81 @@ app.post("/api/generate-offer-and-send", async (req, res) => {
     // cleanup opportuniste
     cleanupOldFiles(TEMP_UPLOAD_FOLDER, MAX_AGE_MINUTES);
 
-    // ---- 1) récupérer une ref OpenAI (priorité: appendixOpenAIFile, sinon openaiFileIdRefs[0]) ----
-    let ref = appendixOpenAIFile;
-    if (!ref && Array.isArray(openaiFileIdRefs) && openaiFileIdRefs.length > 0) {
-      ref = openaiFileIdRefs[0];
-    }
+    // ---- 1) Save ALL refs to temp (savedFiles + errors) ----
+    const refs = Array.isArray(openaiFileIdRefs) ? openaiFileIdRefs : [];
+    const normalizedRefs = refs.map(normalizeOpenAIFileRef).filter(Boolean);
 
-    // ---- 2) si ref existe: download -> save temp -> inject into offer.appendixImagePath ----
-    if (ref) {
-      const fileId = typeof ref === "string" ? ref : ref.id;
-      const originalName = typeof ref === "string" ? "appendix.png" : (ref.name || "appendix.png");
+    const savedFiles = [];
+    const errors = [];
 
-      if (!fileId) {
-        return res.status(400).json({ success: false, error: "appendixOpenAIFile missing id" });
+    for (const r of normalizedRefs) {
+      try {
+        const bytes = await downloadBytesFromOpenAIRef(r);
+        const saved = saveBytesToTemp(bytes, r.name || "uploaded_file.bin");
+        savedFiles.push({
+          id: r.id || null,
+          name: r.name || saved.filename,
+          localPath: saved.localPath,
+          expiresInMinutes: saved.expiresInMinutes,
+        });
+      } catch (e) {
+        errors.push({
+          ref: r.id || r.download_link || "unknown_ref",
+          name: r.name || null,
+          error: e?.message ?? String(e),
+        });
       }
-
-      const bytes = await downloadFromOpenAIFileId(fileId);
-      const saved = saveBytesToTemp(bytes, originalName);
-
-      offer.appendixImagePath = saved.localPath;     // <-- utilisé par generateOfferPDFWithLogo
-      offer.appendixExpiresInMinutes = saved.expiresInMinutes;
-
-      tempFilePathToDeleteLater = saved.localPath;   // (optionnel) on le supprime aussi à la fin si tu veux
     }
 
-    // ---- 3) generate PDF + send email ----
+    // ---- 2) pick appendix ref (prefer appendixOpenAIFile else first image) ----
+    const appendixRef = pickAppendixRef(openaiFileIdRefs, appendixOpenAIFile);
+
+    if (appendixRef) {
+      // ensure it exists in savedFiles, else download+save (when appendixOpenAIFile is not in refs)
+      const already = savedFiles.find((f) => (appendixRef.id ? f.id === appendixRef.id : false) && f.localPath);
+      if (already) {
+        offer.appendixImagePath = already.localPath;
+        offer.appendixExpiresInMinutes = already.expiresInMinutes;
+      } else {
+        try {
+          // validate name ext if image
+          const appendixName = appendixRef.name || "appendix.png";
+          if (!isAllowedImageName(appendixName)) {
+            throw new Error(`Annexe: extension non autorisée (${getExtLower(appendixName) || "no-ext"})`);
+          }
+
+          const bytes = await downloadBytesFromOpenAIRef(appendixRef);
+          const saved = saveBytesToTemp(bytes, appendixName);
+
+          // optional extra validation
+          try {
+            const buf = await loadImageToBuffer({ imagePath: saved.localPath });
+            validateImageBuffer(buf);
+          } catch (_) {
+            // leave it; PDF generator will attempt sharp normalize and may still work
+          }
+
+          offer.appendixImagePath = saved.localPath;
+          offer.appendixExpiresInMinutes = saved.expiresInMinutes;
+
+          // also push to savedFiles if not present
+          savedFiles.push({
+            id: appendixRef.id || null,
+            name: appendixName,
+            localPath: saved.localPath,
+            expiresInMinutes: saved.expiresInMinutes,
+          });
+        } catch (e) {
+          errors.push({
+            ref: appendixRef.id || appendixRef.download_link || "appendix_ref",
+            name: appendixRef.name || null,
+            error: e?.message ?? String(e),
+          });
+        }
+      }
+    }
+
+    // ---- 3) Generate PDF + send email ----
     const pdfBuffer = await generateOfferPDFWithLogo(offer);
     const pdfName = `offre_${Date.now()}.pdf`;
 
@@ -793,19 +743,14 @@ app.post("/api/generate-offer-and-send", async (req, res) => {
       cc: cc || undefined,
       subject,
       html,
-      attachments: [
-        { filename: pdfName, content: pdfBuffer, contentType: "application/pdf" },
-      ],
+      attachments: [{ filename: pdfName, content: pdfBuffer, contentType: "application/pdf" }],
     });
-
-    // (Optionnel) si tu veux supprimer l'image temp juste après l'envoi (au lieu d'attendre 30 min):
-    // if (tempFilePathToDeleteLater && fs.existsSync(tempFilePathToDeleteLater)) {
-    //   try { fs.unlinkSync(tempFilePathToDeleteLater); } catch(_) {}
-    // }
 
     return res.json({
       success: true,
       message: "Offre générée et envoyée avec succès",
+      savedFiles,
+      errors,
       details: {
         email,
         cc: cc || null,
@@ -825,14 +770,11 @@ app.post("/api/generate-offer-and-send", async (req, res) => {
   }
 });
 
-
 // ========== ROUTE : ENVOI EMAIL SIMPLE (SANS PJ) ==========
-
 app.post("/api/send-email", async (req, res) => {
   try {
     const { email, subject, message, messageHtml, cc } = req.body || {};
 
-    // ---------- VALIDATION ----------
     if (!email || !subject || (!message && !messageHtml)) {
       return res.status(400).json({
         success: false,
@@ -842,10 +784,7 @@ app.post("/api/send-email", async (req, res) => {
     }
 
     if (!isValidEmail(email)) {
-      return res.status(400).json({
-        success: false,
-        error: "Email invalide",
-      });
+      return res.status(400).json({ success: false, error: "Email invalide" });
     }
 
     if (cc && !isValidEmail(cc)) {
@@ -856,7 +795,6 @@ app.post("/api/send-email", async (req, res) => {
       });
     }
 
-    // ---------- HTML BODY ----------
     const html =
       messageHtml ||
       `<!DOCTYPE html>
@@ -872,7 +810,6 @@ app.post("/api/send-email", async (req, res) => {
   </body>
 </html>`;
 
-    // ---------- SEND EMAIL ----------
     await transporter.sendMail({
       from: { name: EMAIL_FROM_NAME, address: EMAIL_FROM },
       to: email,
@@ -882,11 +819,8 @@ app.post("/api/send-email", async (req, res) => {
       text: message ? String(message) : undefined,
     });
 
-    console.log(
-      `✅ Email simple envoyé à ${email}${cc ? " (CC: " + cc + ")" : ""}`
-    );
+    console.log(`✅ Email simple envoyé à ${email}${cc ? " (CC: " + cc + ")" : ""}`);
 
-    // ---------- SUCCESS RESPONSE ----------
     return res.json({
       success: true,
       message: "Email envoyé avec succès",
@@ -898,7 +832,6 @@ app.post("/api/send-email", async (req, res) => {
       },
     });
   } catch (err) {
-    // ---------- ERROR LOGGING ----------
     console.error("❌ Erreur envoi email simple (SMTP):", {
       message: err?.message,
       code: err?.code,
@@ -908,7 +841,6 @@ app.post("/api/send-email", async (req, res) => {
       stack: err?.stack,
     });
 
-    // ---------- ERROR RESPONSE ----------
     return res.status(500).json({
       success: false,
       error: "Erreur lors de l'envoi de l'email",
@@ -923,14 +855,11 @@ app.post("/api/send-email", async (req, res) => {
   }
 });
 
-
-
 // ========== ROUTE : ENVOI EMAIL SUPPORT ==========
 app.post("/api/support/send-email", async (req, res) => {
   try {
     const { username, comment, assistant_name } = req.body || {};
 
-    // Validation
     if (!username || !comment || !assistant_name) {
       return res.status(400).json({
         success: false,
@@ -952,112 +881,36 @@ app.post("/api/support/send-email", async (req, res) => {
       <html>
         <head>
           <style>
-            body {
-              font-family: Arial, sans-serif;
-              line-height: 1.6;
-              color: #111827;
-              max-width: 600px;
-              margin: 0 auto;
-              padding: 20px;
-            }
-            .header {
-              background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-              color: black;
-              padding: 20px;
-              border-radius: 8px 8px 0 0;
-              text-align: center;
-              position: relative;
-              overflow: hidden;
-            }
-            .header h1 {
-              color: #ff0000;
-              margin: 0;
-              font-size: 48px;
-              font-weight: 900;
-              letter-spacing: 8px;
-              position: relative;
-              text-shadow:
-                0 0 10px rgba(255, 0, 0, 0.8),
-                0 0 20px rgba(255, 0, 0, 0.6),
-                0 0 30px rgba(255, 0, 0, 0.4),
-                2px 2px 4px rgba(0, 0, 0, 0.3);
-            }
-            .content {
-              background: #f9fafb;
-              padding: 20px;
-              border: 1px solid #e5e7eb;
-              border-top: none;
-            }
-            .info-box {
-              background: white;
-              border-left: 4px solid #667eea;
-              padding: 15px;
-              margin: 15px 0;
-              border-radius: 4px;
-            }
-            .info-box strong {
-              color: #667eea;
-              display: inline-block;
-              width: 150px;
-            }
-            .comment-box {
-              background: white;
-              border: 2px solid #fbbf24;
-              padding: 15px;
-              margin: 15px 0;
-              border-radius: 4px;
-            }
-            .comment-box h3 {
-              margin-top: 0;
-              color: #f59e0b;
-            }
-            .footer {
-              text-align: center;
-              margin-top: 20px;
-              padding: 15px;
-              background: #f3f4f6;
-              border-radius: 0 0 8px 8px;
-              font-size: 12px;
-              color: #6b7280;
-            }
-            .priority {
-              display: inline-block;
-              background: #ef4444;
-              color: white;
-              padding: 5px 10px;
-              border-radius: 4px;
-              font-size: 12px;
-              font-weight: bold;
-            }
+            body { font-family: Arial, sans-serif; line-height: 1.6; color: #111827; max-width: 600px; margin: 0 auto; padding: 20px; }
+            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: black; padding: 20px; border-radius: 8px 8px 0 0; text-align: center; }
+            .header h1 { color: #ff0000; margin: 0; font-size: 48px; font-weight: 900; letter-spacing: 8px; text-shadow: 0 0 10px rgba(255,0,0,.8), 0 0 20px rgba(255,0,0,.6), 0 0 30px rgba(255,0,0,.4), 2px 2px 4px rgba(0,0,0,.3); }
+            .content { background: #f9fafb; padding: 20px; border: 1px solid #e5e7eb; border-top: none; }
+            .info-box { background: white; border-left: 4px solid #667eea; padding: 15px; margin: 15px 0; border-radius: 4px; }
+            .info-box strong { color: #667eea; display: inline-block; width: 150px; }
+            .comment-box { background: white; border: 2px solid #fbbf24; padding: 15px; margin: 15px 0; border-radius: 4px; }
+            .comment-box h3 { margin-top: 0; color: #f59e0b; }
+            .footer { text-align: center; margin-top: 20px; padding: 15px; background: #f3f4f6; border-radius: 0 0 8px 8px; font-size: 12px; color: #6b7280; }
+            .priority { display: inline-block; background: #ef4444; color: white; padding: 5px 10px; border-radius: 4px; font-size: 12px; font-weight: bold; }
           </style>
         </head>
         <body>
-          <div class="header">
-            <h1>🆘</h1>
-          </div>
-
+          <div class="header"><h1>🆘</h1></div>
           <div class="content">
-            <div style="text-align: center; margin-bottom: 20px;">
-              <span class="priority">NOUVEAU TICKET</span>
-            </div>
-
+            <div style="text-align: center; margin-bottom: 20px;"><span class="priority">NOUVEAU TICKET</span></div>
             <div class="info-box">
               <strong>👤 Utilisateur :</strong> ${escapeHtml(username)}<br>
               <strong>🤖 Assistant :</strong> ${escapeHtml(assistant_name)}<br>
               <strong>📅 Date :</strong> ${escapeHtml(timestamp)}
             </div>
-
             <div class="comment-box">
               <h3>💬 Commentaire / Problème :</h3>
               <p style="white-space: pre-wrap; margin: 0;">${escapeHtml(comment)}</p>
             </div>
-
             <div style="background: #e0e7ff; padding: 12px; border-radius: 4px; margin-top: 15px;">
               <strong>ℹ️ Action requise :</strong><br>
               Veuillez traiter cette demande de support dans les plus brefs délais.
             </div>
           </div>
-
           <div class="footer">
             <p>
               Email envoyé automatiquement par le système de support<br>
@@ -1085,10 +938,7 @@ app.post("/api/support/send-email", async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
-    console.error(
-      "❌ Erreur envoi email support:",
-      err && err.stack ? err.stack : String(err)
-    );
+    console.error("❌ Erreur envoi email support:", err && err.stack ? err.stack : String(err));
     return res.status(500).json({
       success: false,
       error: "Erreur lors de l'envoi de l'email",
@@ -1101,9 +951,7 @@ app.post("/api/support/send-email", async (req, res) => {
 app.post("/api/generate-excel-and-send", async (req, res) => {
   try {
     const { email, subject, sheets, filename, cc } = req.body || {};
-    //                       ↑↑↑ ajout de cc ici
 
-    // Validation des données requises
     if (!email || !subject || !sheets) {
       return res.status(400).json({
         success: false,
@@ -1113,13 +961,9 @@ app.post("/api/generate-excel-and-send", async (req, res) => {
     }
 
     if (!isValidEmail(email)) {
-      return res.status(400).json({
-        success: false,
-        error: "Email invalide",
-      });
+      return res.status(400).json({ success: false, error: "Email invalide" });
     }
 
-    // cc est optionnel, mais si présent on le valide aussi
     if (cc && !isValidEmail(cc)) {
       return res.status(400).json({
         success: false,
@@ -1128,76 +972,45 @@ app.post("/api/generate-excel-and-send", async (req, res) => {
       });
     }
 
-    // Création du workbook
     const workbook = XLSX.utils.book_new();
 
-    // Gestion des formats de "sheets"
     if (Array.isArray(sheets)) {
-      // Format: [{ name, data }]
       if (sheets.length === 0) {
-        return res.status(400).json({
-          success: false,
-          error: "Le tableau sheets est vide",
-        });
+        return res.status(400).json({ success: false, error: "Le tableau sheets est vide" });
       }
 
       sheets.forEach((sheet, index) => {
         const sheetName = sheet.name || `Sheet${index + 1}`;
         const sheetData = sheet.data;
-
-        if (!Array.isArray(sheetData)) {
-          throw new Error(`Les données du sheet "${sheetName}" doivent être un tableau`);
-        }
-
+        if (!Array.isArray(sheetData)) throw new Error(`Les données du sheet "${sheetName}" doivent être un tableau`);
         const worksheet = XLSX.utils.aoa_to_sheet(sheetData);
         XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
       });
     } else if (typeof sheets === "object" && sheets !== null) {
-      // Format: { "NomSheet": [ [..], .. ] }
       const sheetNames = Object.keys(sheets);
-
       if (sheetNames.length === 0) {
-        return res.status(400).json({
-          success: false,
-          error: "L'objet sheets est vide",
-        });
+        return res.status(400).json({ success: false, error: "L'objet sheets est vide" });
       }
 
       sheetNames.forEach((sheetName) => {
         const sheetData = sheets[sheetName];
-
-        if (!Array.isArray(sheetData)) {
-          throw new Error(`Les données du sheet "${sheetName}" doivent être un tableau`);
-        }
-
+        if (!Array.isArray(sheetData)) throw new Error(`Les données du sheet "${sheetName}" doivent être un tableau`);
         const worksheet = XLSX.utils.aoa_to_sheet(sheetData);
         XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
       });
     } else {
-      return res.status(400).json({
-        success: false,
-        error: "Format sheets invalide",
-        details: "sheets doit être un array ou un objet",
-      });
+      return res.status(400).json({ success: false, error: "Format sheets invalide", details: "sheets doit être un array ou un objet" });
     }
 
-    // Génération du buffer Excel
-    const excelBuffer = XLSX.write(workbook, {
-      type: "buffer",
-      bookType: "xlsx",
-      compression: true,
-    });
+    const excelBuffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx", compression: true });
 
-    // Nom du fichier
     const excelFilename = filename
       ? `${String(filename).replace(/[^a-z0-9]/gi, "_")}.xlsx`
       : `rapport_${Date.now()}.xlsx`;
 
     const sheetCount = workbook.SheetNames.length;
     const sheetsList = workbook.SheetNames
-      .map(
-        (name, i) => `<li><strong>Sheet ${i + 1}:</strong> ${escapeHtml(name)}</li>`
-      )
+      .map((name, i) => `<li><strong>Sheet ${i + 1}:</strong> ${escapeHtml(name)}</li>`)
       .join("");
 
     const emailHtml = `
@@ -1248,22 +1061,19 @@ app.post("/api/generate-excel-and-send", async (req, res) => {
     await transporter.sendMail({
       from: { name: EMAIL_FROM_NAME, address: EMAIL_FROM },
       to: email,
-      cc: cc || undefined, // ← ajout du CC ici (optionnel)
+      cc: cc || undefined,
       subject,
       html: emailHtml,
       attachments: [
         {
           filename: excelFilename,
           content: excelBuffer,
-          contentType:
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         },
       ],
     });
 
-    console.log(
-      `✅ Excel envoyé à ${email}${cc ? " (CC: " + cc + ")" : ""} - ${excelFilename}`
-    );
+    console.log(`✅ Excel envoyé à ${email}${cc ? " (CC: " + cc + ")" : ""} - ${excelFilename}`);
 
     return res.json({
       success: true,
@@ -1278,10 +1088,7 @@ app.post("/api/generate-excel-and-send", async (req, res) => {
       },
     });
   } catch (err) {
-    console.error(
-      "❌ Erreur génération/envoi Excel:",
-      err && err.stack ? err.stack : String(err)
-    );
+    console.error("❌ Erreur génération/envoi Excel:", err && err.stack ? err.stack : String(err));
     return res.status(500).json({
       success: false,
       error: "Erreur lors du traitement",
@@ -1290,7 +1097,7 @@ app.post("/api/generate-excel-and-send", async (req, res) => {
   }
 });
 
-// ========== ROUTE : GÉNÉRATION PDF + EMAIL ==========
+// ========== ROUTE : GÉNÉRATION PDF + EMAIL (REPORT) ==========
 app.post("/api/generate-and-send", async (req, res) => {
   try {
     const { email, subject, reportContent } = req.body || {};
@@ -1305,22 +1112,12 @@ app.post("/api/generate-and-send", async (req, res) => {
     if (!isValidEmail(email)) {
       return res.status(400).json({ success: false, error: "Email invalide" });
     }
-    if (
-      !reportContent.title ||
-      !reportContent.introduction ||
-      !Array.isArray(reportContent.sections) ||
-      !reportContent.conclusion
-    ) {
-      return res.status(400).json({
-        success: false,
-        error: "Structure du rapport invalide",
-      });
+    if (!reportContent.title || !reportContent.introduction || !Array.isArray(reportContent.sections) || !reportContent.conclusion) {
+      return res.status(400).json({ success: false, error: "Structure du rapport invalide" });
     }
 
     const pdfBuffer = await generatePDF(reportContent);
-    const pdfName = `rapport_${String(reportContent.title)
-      .replace(/[^a-z0-9]/gi, "_")
-      .toLowerCase()}_${Date.now()}.pdf`;
+    const pdfName = `rapport_${String(reportContent.title).replace(/[^a-z0-9]/gi, "_").toLowerCase()}_${Date.now()}.pdf`;
 
     const html = `
       <!DOCTYPE html>
@@ -1364,59 +1161,6 @@ app.post("/api/generate-and-send", async (req, res) => {
   }
 });
 
-// Test image
-app.post("/api/test-image", async (req, res) => {
-  try {
-    const { imageUrl, imageData } = req.body || {};
-
-    let buffer;
-    if (imageUrl) {
-      buffer = await fetchUrlToBuffer(imageUrl);
-    } else if (imageData) {
-      const cleanedBase64 = cleanAndValidateBase64(imageData);
-      buffer = Buffer.from(cleanedBase64, "base64");
-    } else {
-      return res.status(400).json({ error: "Fournir imageUrl ou imageData" });
-    }
-
-    try {
-      validateImageBuffer(buffer);
-    } catch (validationError) {
-      return res.status(400).json({ error: validationError.message });
-    }
-
-    let type = "inconnu";
-    if (buffer[0] === 0xff && buffer[1] === 0xd8) type = "JPEG";
-    else if (buffer[0] === 0x89 && buffer[1] === 0x50) type = "PNG";
-    else if (buffer[0] === 0x47 && buffer[1] === 0x49) type = "GIF";
-
-    let normalizedOk = false;
-    try {
-      const norm = await normalizeImageBuffer(buffer, { format: "png" });
-      if (norm && norm.length > 10) normalizedOk = true;
-    } catch (_e) {}
-
-    return res.json({
-      success: true,
-      imageType: type,
-      size: `${(buffer.length / 1024).toFixed(2)} KB`,
-      sizeBytes: buffer.length,
-      magicBytes: `${buffer[0]
-        .toString(16)
-        .padStart(2, "0")} ${buffer[1]
-        .toString(16)
-        .padStart(2, "0")} ${buffer[2]
-        .toString(16)
-        .padStart(2, "0")} ${buffer[3]
-        .toString(16)
-        .padStart(2, "0")}`,
-      normalizedPreviewPossible: normalizedOk,
-    });
-  } catch (err) {
-    return res.status(500).json({ error: (err && err.message) ?? String(err) });
-  }
-});
-
 // Healthcheck
 app.get("/health", (_req, res) => {
   res.json({
@@ -1431,12 +1175,12 @@ app.get("/health", (_req, res) => {
 app.get("/", (_req, res) => {
   res.json({
     name: "GPT PDF / Excel Email & Support API",
-    version: "2.1.0",
+    version: "2.2.0",
     status: "running",
     endpoints: {
       health: "GET /health",
       echo: "POST /api/echo",
-      testImage: "POST /api/test-image",
+      generateOfferAndSend: "POST /api/generate-offer-and-send",
       generateAndSendPdf: "POST /api/generate-and-send",
       generateExcelAndSend: "POST /api/generate-excel-and-send",
       sendSupportEmail: "POST /api/support/send-email",
@@ -1446,17 +1190,11 @@ app.get("/", (_req, res) => {
 });
 
 /* ========================= 404 & ERREUR ======================== */
-app.use((req, res) =>
-  res.status(404).json({ error: "Route non trouvée", path: req.path })
-);
+app.use((req, res) => res.status(404).json({ error: "Route non trouvée", path: req.path }));
+
 app.use((err, _req, res, _next) => {
-  console.error(
-    "Erreur middleware:",
-    err && err.stack ? err.stack : String(err)
-  );
-  res
-    .status(500)
-    .json({ error: "Erreur serveur", message: (err && err.message) ?? String(err) });
+  console.error("Erreur middleware:", err && err.stack ? err.stack : String(err));
+  res.status(500).json({ error: "Erreur serveur", message: (err && err.message) ?? String(err) });
 });
 
 /* ============================ START ============================ */
@@ -1467,9 +1205,7 @@ app.listen(PORT, "0.0.0.0", () => {
 });
 
 /* ========================= PROCESS HOOKS ======================= */
-process.on("unhandledRejection", (r) =>
-  console.error("Unhandled Rejection:", r && r.stack ? r.stack : String(r))
-);
+process.on("unhandledRejection", (r) => console.error("Unhandled Rejection:", r && r.stack ? r.stack : String(r)));
 process.on("uncaughtException", (e) => {
   console.error("Uncaught Exception:", e && e.stack ? e.stack : String(e));
   process.exit(1);
