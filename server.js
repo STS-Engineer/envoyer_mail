@@ -14,7 +14,7 @@ const OpenAI = require("openai"); // npm i openai
 const { v4: uuidv4 } = require("uuid"); // npm i uuid
 
 const app = express();
-
+const { URL } = require("url");
 /* ========================= CONFIG FIXE ========================= */
 const SMTP_HOST = "avocarbon-com.mail.protection.outlook.com";
 const SMTP_PORT = 25;
@@ -214,18 +214,28 @@ function normalizeOpenAIFileRef(ref) {
 async function downloadBytesFromOpenAIRef(nref) {
   if (!nref) throw new Error("Ref OpenAI vide");
 
-  // priority: download_link
-  if (nref.download_link) {
-    return await fetchUrlToBuffer(nref.download_link);
+  const dl = nref.download_link;
+
+  // ✅ Use download_link ONLY if it's a real http(s) URL
+  if (dl && /^https?:\/\//i.test(String(dl))) {
+    return await fetchUrlToBuffer(dl);
   }
 
-  if (!nref.id) throw new Error("Ref OpenAI sans id et sans download_link");
+  // ✅ Sometimes download_link is like "file_..." → treat it as an id
+  const possibleId =
+    nref.id ||
+    (dl && /^file_/i.test(String(dl)) ? String(dl) : null);
+
+  if (!possibleId) {
+    throw new Error("Ref OpenAI sans id et sans download_link http(s)");
+  }
 
   // OpenAI Files API -> bytes
-  const resp = await openai.files.content(nref.id);
+  const resp = await openai.files.content(possibleId);
   const ab = await resp.arrayBuffer();
   return Buffer.from(ab);
 }
+
 
 function pickAppendixRef(openaiFileIdRefs, appendixOpenAIFile) {
   const prefer = normalizeOpenAIFileRef(appendixOpenAIFile);
@@ -657,9 +667,11 @@ app.post("/api/generate-offer-and-send", async (req, res) => {
         const saved = saveBytesToTemp(bytes, r.name || "uploaded_file.bin");
         savedFiles.push({
           id: r.id || null,
+          download_link: r.download_link || null,
           name: r.name || saved.filename,
           localPath: saved.localPath,
-          expiresInMinutes: saved.expiresInMinutes,
+            expiresInMinutes: saved.expiresInMinutes,
+          });
         });
       } catch (e) {
         errors.push({
@@ -675,7 +687,16 @@ app.post("/api/generate-offer-and-send", async (req, res) => {
 
     if (appendixRef) {
       // ensure it exists in savedFiles, else download+save (when appendixOpenAIFile is not in refs)
-      const already = savedFiles.find((f) => (appendixRef.id ? f.id === appendixRef.id : false) && f.localPath);
+      const already = savedFiles.find((f) => {
+          if (!f.localPath) return false;
+          if (appendixRef.id && f.id && f.id === appendixRef.id) return true;
+                 // match by download_link
+          if (appendixRef.download_link && f.download_link && f.download_link === appendixRef.download_link) return true;
+         // fallback match by name
+          if (appendixRef.name && f.name && f.name === appendixRef.name) return true;
+          return false;
+      });
+
       if (already) {
         offer.appendixImagePath = already.localPath;
         offer.appendixExpiresInMinutes = already.expiresInMinutes;
